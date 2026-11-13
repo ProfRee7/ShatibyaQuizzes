@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>لوحة الأدمن</title>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#f6f4ef; --ink:#222; --muted:#777; --green:#2e9d5b; --red:#e0524f; --line:#e4e0d6; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:'Cairo',system-ui,sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; padding:16px 16px 80px; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
+  h1 { font-size:1.3rem; margin:0; }
+  .tabs { display:flex; gap:6px; margin-bottom:16px; }
+  .tab { padding:9px 18px; border-radius:10px; border:0; background:#e9e5da; font:inherit; font-weight:600; cursor:pointer; }
+  .tab.on { background:#2b2b2b; color:#fff; }
+  .card { background:#fff; border-radius:14px; padding:16px; margin-bottom:14px; box-shadow:0 2px 8px rgba(0,0,0,.05); }
+  button { font:inherit; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  .btn { border:0; border-radius:10px; padding:9px 16px; background:#2b2b2b; color:#fff; font-weight:600; }
+  .btn.light { background:#ece8dd; color:#222; } .btn.danger { background:#fbe3e2; color:#b53a37; } .btn.green { background:var(--green); }
+  .btn.sm { padding:5px 10px; font-size:.85rem; }
+  input[type=text], input[type=password], input[type=email], textarea, select { width:100%; font:inherit; padding:10px 12px; border:1.5px solid var(--line); border-radius:10px; background:#fff; }
+  textarea { resize:vertical; min-height:60px; }
+  label.f { display:block; font-weight:600; font-size:.9rem; margin:12px 0 5px; }
+  .row { display:flex; gap:8px; align-items:center; }
+  .row > input[type=text] { flex:1; }
+  .spread { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
+  .muted { color:var(--muted); font-size:.88rem; }
+  .qbox { border:1.5px solid var(--line); border-radius:12px; padding:14px; margin:12px 0; background:#fcfbf8; }
+  .qhead { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; font-weight:700; }
+  .link { direction:ltr; text-align:left; font-size:.85rem; color:#555; word-break:break-all; background:#f3f0e7; padding:6px 10px; border-radius:8px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { padding:10px 8px; text-align:right; border-bottom:1px solid var(--line); font-size:.95rem; }
+  th { color:var(--muted); font-weight:600; font-size:.85rem; }
+  .pill { display:inline-block; padding:2px 10px; border-radius:99px; font-weight:700; font-size:.85rem; }
+  .pill.ok { background:#d9f1e3; color:#1f7a44; } .pill.mid { background:#fbf0d2; color:#8a6a10; } .pill.no { background:#fbe3e2; color:#b53a37; }
+  .detail td { background:#faf8f3; }
+  .d-ok { color:var(--green); font-weight:700; } .d-no { color:var(--red); font-weight:700; }
+  .err { color:var(--red); margin:8px 0; min-height:1.2em; }
+  .overflow { overflow-x:auto; }
+  .login { max-width:360px; margin:80px auto; }
+</style>
+</head>
+<body>
+<div class="wrap" id="root"><div class="muted" style="text-align:center;margin-top:60px">جاري التحميل...</div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="config.js"></script>
+<script src="store.js"></script>
+<script>
+const root = document.getElementById('root');
+let view = 'login';          // login | exercises | editor | results
+let EX = {}, AT = {};        // نسخة حيّة من الداتا (بتتحدث لوحدها)
+let editing = null;
+let resultsFilter = '';
+let listening = false;
+const openDetails = new Set();
+
+/* ---------- Auth ---------- */
+fauth.onAuthStateChanged(user => {
+  if (user) startApp(); else { stopApp(); renderLogin(); }
+});
+
+function renderLogin(msg) {
+  view = 'login';
+  root.innerHTML = `<div class="card login"><h1 style="text-align:center">دخول الأدمن</h1>
+    <label class="f">الإيميل</label><input type="email" id="em" autocomplete="username" dir="ltr">
+    <label class="f">كلمة السر</label><input type="password" id="pw" autocomplete="current-password" dir="ltr">
+    <div class="err" id="lerr">${esc(msg || '')}</div><button class="btn" style="width:100%" id="lbtn">دخول</button></div>`;
+  const go = async () => {
+    const btn = document.getElementById('lbtn'); btn.disabled = true;
+    try { await fauth.signInWithEmailAndPassword(document.getElementById('em').value.trim(), document.getElementById('pw').value); }
+    catch (e) { document.getElementById('lerr').textContent = 'الإيميل أو كلمة السر غلط'; btn.disabled = false; }
+  };
+  document.getElementById('lbtn').onclick = go;
+  document.getElementById('pw').onkeydown = e => { if (e.key === 'Enter') go(); };
+}
+function logout() { fauth.signOut(); }
+
+function startApp() {
+  if (listening) return;
+  listening = true;
+  fdb.ref('exercises').on('value', s => { EX = s.val() || {}; refresh(); }, notAdmin);
+  fdb.ref('attempts').on('value', s => { AT = s.val() || {}; refresh(); }, notAdmin);
+  showExercises();
+}
+function stopApp() {
+  fdb.ref('exercises').off(); fdb.ref('attempts').off();
+  listening = false; EX = {}; AT = {};
+}
+let kicked = false;
+function notAdmin() {
+  // الحساب دخل بس مش هو الأدمن (الـ UID مش في القواعد)
+  if (kicked) return; kicked = true;
+  fauth.signOut().then(() => { kicked = false; renderLogin('الحساب ده مش أدمن، أو مفيش صلاحية. تأكدي من الـ UID في القواعد.'); });
+}
+function refresh() {
+  if (view === 'exercises') renderExercises();
+  else if (view === 'results') renderResults();
+}
+
+/* ---------- Shell ---------- */
+function shell(inner, active) {
+  root.innerHTML = `<header><h1>📝 لوحة التمارين</h1><button class="btn light sm" onclick="logout()">خروج</button></header>
+    <div class="tabs">
+      <button class="tab ${active === 'exercises' ? 'on' : ''}" onclick="showExercises()">التمارين</button>
+      <button class="tab ${active === 'results' ? 'on' : ''}" onclick="showResults()">النتائج</button>
+    </div>${inner}`;
+}
+const exList = () => Object.entries(EX).map(([id, ex]) => ({ id, ...ex })).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+const quizLink = id => new URL('quiz.html?e=' + id, location.href).href;
+
+/* ---------- Exercises list ---------- */
+function showExercises() { view = 'exercises'; renderExercises(); }
+function renderExercises() {
+  const atts = Object.values(AT);
+  const list = exList().length ? exList().map(ex => {
+    const n = atts.filter(a => a.exerciseId === ex.id).length;
+    return `<div class="card"><div class="spread"><div><b>${esc(ex.title)}</b>
+      <div class="muted">${toArray(ex.questions).length} سؤال • ${n} محاولة</div></div>
+      <div class="row"><button class="btn sm light" onclick="editExercise('${ex.id}')">تعديل</button>
+      <button class="btn sm light" onclick="showResults('${ex.id}')">النتائج</button>
+      <button class="btn sm danger" onclick="delExercise('${ex.id}')">حذف</button></div></div>
+      <div class="row" style="margin-top:8px"><div class="link" style="flex:1">${esc(quizLink(ex.id))}</div>
+      <button class="btn sm green" onclick="copyLink('${ex.id}', this)">نسخ اللينك</button></div></div>`;
+  }).join('') : '<div class="card muted">لسه مفيش تمارين. اضغطي "تمرين جديد".</div>';
+  shell(`<div style="margin-bottom:12px"><button class="btn" onclick="newExercise()">+ تمرين جديد</button></div>${list}`, 'exercises');
+}
+function copyLink(id, btn) {
+  const done = () => { btn.textContent = 'تم ✓'; setTimeout(() => btn.textContent = 'نسخ اللينك', 1500); };
+  (navigator.clipboard ? navigator.clipboard.writeText(quizLink(id)).then(done) : Promise.reject()).catch(() => prompt('انسخي اللينك:', quizLink(id)));
+}
+async function delExercise(id) {
+  if (!confirm('هتمسحي التمرين وكل نتايجه. متأكدة؟')) return;
+  const upd = { ['exercises/' + id]: null };
+  Object.entries(AT).forEach(([aid, a]) => { if (a.exerciseId === id) upd['attempts/' + aid] = null; });
+  try { await fdb.ref().update(upd); } catch (e) { alert('حصل خطأ في الحذف'); }
+}
+
+/* ---------- Editor ---------- */
+const blankQ = () => ({ id: '', context: '', text: '', choices: ['', '', '', ''], correct: 0 });
+function newExercise() { editing = { title: '', questions: [blankQ()] }; renderEditor(); }
+function editExercise(id) {
+  const ex = EX[id];
+  editing = {
+    id, createdAt: ex.createdAt, title: ex.title,
+    questions: toArray(ex.questions).map(q => ({ id: q.id, context: q.context || '', text: q.text, choices: toArray(q.choices), correct: q.correct }))
+  };
+  renderEditor();
+}
+function renderEditor() {
+  view = 'editor';
+  const qs = editing.questions.map((q, qi) => `
+    <div class="qbox">
+      <div class="qhead"><span>سؤال ${qi + 1}</span>
+        <button class="btn sm danger" onclick="removeQ(${qi})" ${editing.questions.length === 1 ? 'disabled' : ''}>حذف السؤال</button></div>
+      <label class="f">نص/مثال فوق السؤال (اختياري)</label>
+      <textarea oninput="editing.questions[${qi}].context=this.value" placeholder="مثلاً: الآية أو الجملة اللي هيتسأل عنها">${esc(q.context)}</textarea>
+      <label class="f">السؤال</label>
+      <textarea oninput="editing.questions[${qi}].text=this.value">${esc(q.text)}</textarea>
+      <label class="f">الاختيارات (حددي الإجابة الصحيحة بالدايرة)</label>
+      ${q.choices.map((c, ci) => `<div class="row" style="margin-bottom:6px">
+        <input type="radio" name="correct${qi}" ${q.correct === ci ? 'checked' : ''} onchange="editing.questions[${qi}].correct=${ci}" style="width:20px;height:20px">
+        <input type="text" value="${esc(c)}" oninput="editing.questions[${qi}].choices[${ci}]=this.value" placeholder="اختيار ${ci + 1}">
+        <button class="btn sm danger" onclick="removeChoice(${qi},${ci})" ${q.choices.length <= 2 ? 'disabled' : ''}>✕</button></div>`).join('')}
+      <button class="btn sm light" onclick="addChoice(${qi})">+ اختيار</button>
+    </div>`).join('');
+  shell(`<div class="card">
+    <label class="f" style="margin-top:0">عنوان التمرين</label>
+    <input type="text" value="${esc(editing.title)}" oninput="editing.title=this.value" placeholder="مثلاً: تحدي الشاطبية - فرش السور">
+    ${qs}
+    <button class="btn light" onclick="addQ()">+ سؤال جديد</button>
+    <div class="err" id="eerr"></div>
+    <div class="row"><button class="btn green" id="savebtn" onclick="saveExercise()">حفظ التمرين</button>
+    <button class="btn light" onclick="showExercises()">إلغاء</button></div></div>`, 'exercises');
+}
+function addQ() { editing.questions.push(blankQ()); renderEditor(); window.scrollTo(0, document.body.scrollHeight); }
+function removeQ(i) { editing.questions.splice(i, 1); renderEditor(); }
+function addChoice(qi) { editing.questions[qi].choices.push(''); renderEditor(); }
+function removeChoice(qi, ci) {
+  const q = editing.questions[qi]; q.choices.splice(ci, 1);
+  if (q.correct === ci) q.correct = 0; else if (q.correct > ci) q.correct--;
+  renderEditor();
+}
+async function saveExercise() {
+  const err = document.getElementById('eerr');
+  const title = editing.title.trim();
+  if (!title) { err.textContent = 'اكتبي عنوان للتمرين'; return; }
+  const questions = [];
+  for (let i = 0; i < editing.questions.length; i++) {
+    const q = editing.questions[i];
+    const text = q.text.trim();
+    if (!text) { err.textContent = `السؤال رقم ${i + 1} فاضي`; return; }
+    // نشيل الاختيارات الفاضية ونظبط رقم الإجابة الصحيحة
+    const keep = q.choices.map((c, idx) => ({ c: c.trim(), idx })).filter(x => x.c);
+    if (keep.length < 2) { err.textContent = `السؤال رقم ${i + 1} لازم يكون فيه اختيارين على الأقل`; return; }
+    const correct = keep.findIndex(x => x.idx === q.correct);
+    if (correct < 0) { err.textContent = `الإجابة الصحيحة في السؤال رقم ${i + 1} مش مكتوبة (الاختيار فاضي)`; return; }
+    questions.push({ id: q.id || newId(4), context: q.context.trim(), text, choices: keep.map(x => x.c), correct });
+  }
+  const id = editing.id || newId(6);
+  const btn = document.getElementById('savebtn'); btn.disabled = true;
+  try {
+    await fdb.ref('exercises/' + id).set({ title, questions, createdAt: editing.createdAt || new Date().toISOString() });
+    showExercises();
+  } catch (e) { err.textContent = 'مقدرتش أحفظ. اتأكدي إنك داخلة بحساب الأدمن وإن القواعد منشورة.'; btn.disabled = false; }
+}
+
+/* ---------- Results ---------- */
+function showResults(exId) {
+  view = 'results';
+  if (exId !== undefined) resultsFilter = exId;
+  renderResults();
+}
+function renderResults() {
+  const list = Object.entries(AT)
+    .map(([id, a]) => ({ id, ...a, answers: Object.values(a.answers || {}).sort((x, y) => String(x.at).localeCompare(String(y.at))) }))
+    .filter(a => !resultsFilter || a.exerciseId === resultsFilter)
+    .sort((x, y) => String(y.startedAt).localeCompare(String(x.startedAt)));
+  const opts = `<option value="">كل التمارين</option>` + exList().map(e => `<option value="${e.id}" ${e.id === resultsFilter ? 'selected' : ''}>${esc(e.title)}</option>`).join('');
+  const rows = list.map(a => {
+    const score = a.answers.filter(x => x.isCorrect).length;
+    const pct = a.total ? Math.round(score / a.total * 100) : 0;
+    const cls = pct >= 70 ? 'ok' : pct >= 40 ? 'mid' : 'no';
+    const dt = new Date(a.startedAt).toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' });
+    const open = openDetails.has(a.id);
+    return `<tr><td><b>${esc(a.name)}</b></td><td>${esc(a.exerciseTitle)}</td>
+      <td><span class="pill ${cls}">${score} / ${a.total}</span></td>
+      <td>${a.finishedAt ? 'خلّص' : `<span class="muted">${a.answers.length}/${a.total} جاوب</span>`}</td>
+      <td class="muted">${esc(dt)}</td>
+      <td><button class="btn sm light" onclick="toggleDetail('${a.id}')">تفاصيل</button>
+          <button class="btn sm danger" onclick="delAttempt('${a.id}')">حذف</button></td></tr>
+      <tr class="detail" id="d-${a.id}" style="display:${open ? 'table-row' : 'none'}"><td colspan="6">${
+        a.answers.length ? a.answers.map((x, i) => `<div style="margin:6px 0"><span class="${x.isCorrect ? 'd-ok' : 'd-no'}">${x.isCorrect ? '✓' : '✗'}</span>
+          ${i + 1}. ${esc(x.questionText)} — اختارت: <b>${esc(x.chosenText)}</b>${x.isCorrect ? '' : ` <span class="muted">(الصح: ${esc(x.correctText)})</span>`}</div>`).join('') : '<span class="muted">لسه ما جاوبتش</span>'}</td></tr>`;
+  }).join('');
+  shell(`<div class="card"><div class="spread" style="margin-bottom:10px"><b>نتائج المستخدمين (${list.length})</b>
+    <select id="rf" style="width:auto;min-width:200px" onchange="showResults(this.value)">${opts}</select></div>
+    <div class="overflow">${list.length ? `<table><thead><tr><th>الاسم</th><th>التمرين</th><th>الدرجة</th><th>الحالة</th><th>الوقت</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="muted">مفيش نتايج لسه.</div>'}</div></div>`, 'results');
+}
+function toggleDetail(id) {
+  const r = document.getElementById('d-' + id);
+  if (openDetails.has(id)) { openDetails.delete(id); r.style.display = 'none'; } else { openDetails.add(id); r.style.display = 'table-row'; }
+}
+async function delAttempt(id) {
+  if (!confirm('تمسحي النتيجة دي؟')) return;
+  try { await fdb.ref('attempts/' + id).remove(); } catch (e) { alert('حصل خطأ في الحذف'); }
+}
+</script>
+</body>
+</html>

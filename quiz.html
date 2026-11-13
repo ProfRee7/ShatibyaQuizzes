@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>تمرين</title>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#f6f4ef; --card:#fff; --ink:#222; --muted:#777; --green:#2e9d5b; --red:#e0524f; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:'Cairo',system-ui,sans-serif; }
+  .wrap { max-width:640px; margin:0 auto; padding:20px 16px 60px; }
+  h1 { font-size:1.3rem; margin:8px 0 18px; text-align:center; }
+  .card { background:var(--card); border-radius:16px; padding:20px; box-shadow:0 2px 10px rgba(0,0,0,.06); }
+  .ctx { background:#fbf4e6; border:1px solid #e8d9b5; border-radius:14px; padding:18px; text-align:center; font-size:1.4rem; line-height:2; margin-bottom:18px; white-space:pre-wrap; }
+  .q { font-size:1.15rem; font-weight:700; margin:0 0 14px; white-space:pre-wrap; }
+  .progress { height:8px; background:#e6e2d8; border-radius:99px; overflow:hidden; margin-bottom:6px; }
+  .progress > div { height:100%; background:var(--green); transition:width .3s; }
+  .pinfo { font-size:.85rem; color:var(--muted); margin-bottom:16px; text-align:center; }
+  .choice { display:block; width:100%; text-align:center; border:2px solid transparent; border-radius:12px; padding:16px; margin:10px 0; font:inherit; font-size:1.05rem; cursor:pointer; transition:transform .05s, opacity .2s; color:#333; white-space:pre-wrap; }
+  .choice:active { transform:scale(.99); }
+  .c0 { background:#f8d9d9; } .c1 { background:#c9ece8; } .c2 { background:#f7e7c2; } .c3 { background:#d9d9f7; } .c4 { background:#e3f1c9; } .c5 { background:#f3d3ea; }
+  .choice.correct { background:var(--green); color:#fff; border-color:#1f7a44; }
+  .choice.wrong { background:var(--red); color:#fff; border-color:#b53a37; }
+  .choice.dim { opacity:.45; }
+  .choice:disabled { cursor:default; }
+  .feedback { text-align:center; font-weight:700; font-size:1.1rem; margin:14px 0 4px; }
+  .feedback.ok { color:var(--green); } .feedback.no { color:var(--red); }
+  button.primary { display:block; width:100%; background:#2b2b2b; color:#fff; border:0; border-radius:12px; padding:14px; font:inherit; font-size:1.05rem; font-weight:600; cursor:pointer; margin-top:14px; }
+  input[type=text] { width:100%; font:inherit; font-size:1.05rem; padding:14px; border:2px solid #ddd; border-radius:12px; margin:12px 0 4px; text-align:center; }
+  .score { font-size:3rem; font-weight:700; text-align:center; margin:6px 0; }
+  .review { display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:14px; }
+  .dot { width:38px; height:38px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; }
+  .dot.ok { background:var(--green); } .dot.no { background:var(--red); }
+  .err { color:var(--red); text-align:center; margin-top:8px; min-height:1.2em; }
+  .center { text-align:center; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap"><h1 id="title"></h1><div id="app" class="center">جاري التحميل...</div></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="config.js"></script>
+<script src="store.js"></script>
+<script>
+const exId = (new URLSearchParams(location.search).get('e') || '').replace(/[^\w-]/g, '');
+const KEY = 'attempt_' + exId;
+const app = document.getElementById('app');
+const titleEl = document.getElementById('title');
+let exercise = null; // {title, questions:[{id,context,text,choices,correct}]}
+let state = null;    // {attemptId, name, answers:{qid:{chosen,correctIndex,isCorrect}}}
+let current = 0;
+
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+const lsDel = k => { try { localStorage.removeItem(k); } catch (e) {} };
+
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on')) e[k] = v;
+    else e.setAttribute(k, v);
+  }
+  kids.flat().forEach(c => e.append(c));
+  return e;
+}
+
+async function init() {
+  if (!exId) { app.textContent = 'اللينك ناقص أو غلط'; return; }
+  let ex;
+  try { ex = (await fdb.ref('exercises/' + exId).once('value')).val(); }
+  catch (e) { app.textContent = 'تعذّر تحميل التمرين. تأكدي من الإنترنت وحاولي تاني.'; return; }
+  if (!ex) { app.textContent = 'التمرين مش موجود'; return; }
+  exercise = {
+    title: ex.title,
+    questions: toArray(ex.questions).map(q => ({ id: q.id, context: q.context || '', text: q.text, choices: toArray(q.choices), correct: q.correct }))
+  };
+  titleEl.textContent = ex.title;
+  document.title = ex.title;
+
+  // لو الضيف كان بدأ قبل كده من نفس الجهاز يكمّل من مكانه
+  const saved = lsGet(KEY);
+  if (saved) {
+    try {
+      const a = (await fdb.ref('attempts/' + saved).once('value')).val();
+      if (a && a.exerciseId === exId) {
+        state = { attemptId: saved, name: a.name, answers: a.answers || {} };
+        return startQuiz();
+      }
+    } catch (e) {}
+    lsDel(KEY);
+  }
+  showNameForm();
+}
+
+function showNameForm() {
+  const input = el('input', { type: 'text', placeholder: 'اكتبي اسمك', maxlength: 60 });
+  const err = el('div', { class: 'err' });
+  const btn = el('button', { class: 'primary' }, 'ابدأ');
+  const go = async () => {
+    const name = input.value.trim().slice(0, 60);
+    if (!name) { err.textContent = 'اكتبي اسمك الأول'; return; }
+    btn.disabled = true;
+    const attemptId = newId(10);
+    try {
+      await fdb.ref('attempts/' + attemptId).set({
+        exerciseId: exId, exerciseTitle: exercise.title, name,
+        startedAt: new Date().toISOString(), total: exercise.questions.length
+      });
+      lsSet(KEY, attemptId);
+      state = { attemptId, name, answers: {} };
+      startQuiz();
+    } catch (e) { err.textContent = 'حصل خطأ، حاولي تاني.'; btn.disabled = false; }
+  };
+  btn.onclick = go;
+  input.onkeydown = e => { if (e.key === 'Enter') go(); };
+  app.replaceChildren(el('div', { class: 'card' },
+    el('div', { class: 'q', style: 'text-align:center' }, 'أهلاً بيكي 👋'),
+    el('div', { class: 'center' }, `التمرين فيه ${exercise.questions.length} سؤال`),
+    input, err, btn));
+  input.focus();
+}
+
+function startQuiz() {
+  const firstOpen = exercise.questions.findIndex(q => !state.answers[q.id]);
+  current = firstOpen === -1 ? exercise.questions.length : firstOpen;
+  render();
+}
+
+function render() {
+  const qs = exercise.questions;
+  if (current >= qs.length) return renderDone();
+  const q = qs[current];
+  const ans = state.answers[q.id];
+  const total = qs.length;
+  const answeredCount = qs.filter(x => state.answers[x.id]).length;
+
+  const card = el('div', { class: 'card' },
+    el('div', { class: 'progress' }, el('div', { style: `width:${answeredCount / total * 100}%` })),
+    el('div', { class: 'pinfo' }, `سؤال ${current + 1} من ${total}`));
+  if (q.context) card.append(el('div', { class: 'ctx' }, q.context));
+  card.append(el('p', { class: 'q' }, q.text));
+
+  const btns = q.choices.map((c, i) => {
+    const b = el('button', { class: 'choice c' + (i % 6) }, c);
+    if (ans) {
+      b.disabled = true;
+      if (i === ans.correctIndex) b.className = 'choice correct';
+      else if (i === ans.chosen) b.className = 'choice wrong';
+      else b.classList.add('dim');
+    } else {
+      b.onclick = () => choose(q, i, btns);
+    }
+    return b;
+  });
+  card.append(...btns);
+
+  if (ans) {
+    card.append(el('div', { class: 'feedback ' + (ans.isCorrect ? 'ok' : 'no') }, ans.isCorrect ? '✅ إجابة صحيحة' : '❌ إجابة غلط'));
+    const last = current === total - 1;
+    card.append(el('button', { class: 'primary', onclick: () => { current++; render(); } }, last ? 'عرض النتيجة' : 'السؤال التالي'));
+  }
+  app.replaceChildren(card);
+}
+
+async function choose(q, i, btns) {
+  btns.forEach(b => b.disabled = true);
+  const rec = {
+    questionId: q.id, questionText: q.text, chosen: i, chosenText: q.choices[i],
+    correctIndex: q.correct, correctText: q.choices[q.correct],
+    isCorrect: i === q.correct, at: new Date().toISOString()
+  };
+  const upd = { ['answers/' + q.id]: rec };
+  const answeredAfter = exercise.questions.filter(x => state.answers[x.id] || x.id === q.id).length;
+  if (answeredAfter >= exercise.questions.length) upd.finishedAt = new Date().toISOString();
+  try {
+    await fdb.ref('attempts/' + state.attemptId).update(upd);
+    state.answers[q.id] = rec;
+    render();
+  } catch (e) {
+    btns.forEach(b => b.disabled = false);
+    alert('حصل خطأ في حفظ الإجابة، حاولي تاني.');
+  }
+}
+
+function renderDone() {
+  const qs = exercise.questions;
+  const score = qs.filter(q => state.answers[q.id] && state.answers[q.id].isCorrect).length;
+  const emoji = score === qs.length ? '🎉' : score >= qs.length / 2 ? '👏' : '💪';
+  app.replaceChildren(el('div', { class: 'card' },
+    el('div', { class: 'center' }, `برافو يا ${state.name}`),
+    el('div', { class: 'score' }, `${score} / ${qs.length} ${emoji}`),
+    el('div', { class: 'review' }, qs.map((q, i) => {
+      const a = state.answers[q.id];
+      return el('div', { class: 'dot ' + (a && a.isCorrect ? 'ok' : 'no'), title: q.text }, String(i + 1));
+    })),
+    el('button', { class: 'primary', onclick: () => { current = 0; render(); } }, 'راجعي إجاباتك')));
+}
+
+init();
+</script>
+</body>
+</html>
