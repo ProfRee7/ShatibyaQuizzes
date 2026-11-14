@@ -51,6 +51,17 @@
   .fix { font-size:.8rem; color:var(--green); font-weight:600; }
   .hint { text-align:center; color:var(--muted); font-size:.9rem; margin:-8px 0 12px; }
   button.primary:disabled { opacity:.4; cursor:default; }
+  /* نص منسّق + صور */
+  .rich { white-space:normal !important; }
+  .rich p, .rich div { margin:0; }
+  .rich ul, .rich ol { margin:6px 0; padding-inline-start:26px; text-align:right; }
+  .rich img { max-width:100%; max-height:380px; border-radius:10px; cursor:zoom-in; vertical-align:middle; margin:4px 0; }
+  .rich img:not([src]) { display:inline-block; min-width:90px; min-height:60px; background:#e9e5da; }
+  .qimgwrap { text-align:center; margin:0 0 14px; }
+  .qimg { max-width:100%; max-height:380px; border-radius:12px; cursor:zoom-in; }
+  .qimgwrap .center { padding:30px 0; }
+  .zoomov { position:fixed; inset:0; z-index:300; background:rgba(0,0,0,.88); display:flex; align-items:center; justify-content:center; cursor:zoom-out; }
+  .zoomov img { max-width:96vw; max-height:96vh; }
   textarea.answer { width:100%; font:inherit; font-size:1.1rem; padding:14px; border:2px solid #ddd; border-radius:12px; resize:vertical; min-height:96px; }
   .anstext { padding:14px; border-radius:12px; font-size:1.1rem; white-space:pre-wrap; text-align:center; }
   .anstext.ok { background:#e2f5ea; border:2px solid var(--green); color:#1f7a44; font-weight:700; }
@@ -102,7 +113,7 @@ async function init() {
       ? { id: q.id, type: 'text', context: q.context || '', text: q.text, answers: toArray(q.answers) }
       : q.type === 'fill'
       ? { id: q.id, type: 'fill', context: q.context || '', text: q.text || 'اسحبي الكلمات للأماكن الفاضية', sentences: toArray(q.sentences), extras: toArray(q.extras) }
-      : { id: q.id, type: 'mcq', context: q.context || '', text: q.text, choices: toArray(q.choices), correct: q.correct })
+      : { id: q.id, type: 'mcq', context: q.context || '', contextHtml: q.contextHtml || '', text: q.text, textHtml: q.textHtml || '', choices: toArray(q.choices), correct: q.correct })
   };
   titleEl.textContent = ex.title;
   document.title = ex.title;
@@ -167,8 +178,10 @@ function render() {
   const card = el('div', { class: 'card' },
     el('div', { class: 'progress' }, el('div', { style: `width:${answeredCount / total * 100}%` })),
     el('div', { class: 'pinfo' }, `سؤال ${current + 1} من ${total}`));
-  if (q.context) card.append(el('div', { class: 'ctx' }, q.context));
-  card.append(el('p', { class: 'q' }, q.text));
+  if (q.context || q.contextHtml) card.append(rich('div', 'ctx', q.contextHtml, q.context));
+  card.append(rich('p', 'q', q.textHtml, q.text));
+  // نحمّل صورة السؤال الجاي مقدمًا عشان تظهر فورًا
+  exercise.questions.slice(current, current + 2).forEach(x => imageIdsIn((x.contextHtml || '') + (x.textHtml || '')).forEach(loadImage));
 
   if (q.type === 'fill') renderFill(card, q, ans);
   else if (q.type === 'text') renderText(card, q, ans);
@@ -216,6 +229,19 @@ function celebrate() {
   })(t0);
 }
 
+/* ---------- نص منسّق وصور ---------- */
+function rich(tag, cls, html, plain) {
+  const e = el(tag, { class: cls + (html ? ' rich' : '') });
+  if (html) {
+    e.innerHTML = sanitizeHtml(html); hydrateImages(e);
+    e.querySelectorAll('img').forEach(i => { i.onclick = () => zoomImage(i.src); });
+  } else e.textContent = plain || '';
+  return e;
+}
+function zoomImage(src) {
+  const ov = el('div', { class: 'zoomov' }, el('img', { src, alt: '' }));
+  ov.onclick = () => ov.remove(); document.body.append(ov);
+}
 /* ---------- اختيارات ---------- */
 function renderMcq(card, q, ans) {
   const btns = q.choices.map((c, i) => {

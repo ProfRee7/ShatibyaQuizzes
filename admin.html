@@ -35,6 +35,19 @@
   .picker { text-align:center; background:#f7f3e8; }
   .hintbox { font-size:.85rem; color:var(--muted); background:#f3f0e7; border-radius:8px; padding:8px 10px; margin:6px 0; }
   .preview { font-size:.9rem; margin-top:8px; padding:8px 10px; background:#eef6f0; border-radius:8px; }
+  .rte-tb { display:flex; flex-wrap:wrap; gap:4px; align-items:center; padding:6px; background:#f3f0e7; border:1.5px solid var(--line); border-bottom:0; border-radius:10px 10px 0 0; }
+  .rte-tb button { min-width:30px; height:30px; padding:0 8px; border:1px solid #d8d2c2; background:#fff; border-radius:6px; font:inherit; font-size:.9rem; cursor:pointer; }
+  .rte-tb button:hover { background:#eee9db; }
+  .rte-tb .sw { width:22px; min-width:22px; height:22px; padding:0; border-radius:50%; border:2px solid #fff; box-shadow:0 0 0 1px #bbb; }
+  .rte-tb select { width:auto; padding:3px 6px; font-size:.85rem; }
+  .rte-tb .sep { width:1px; height:22px; background:#d8d2c2; margin:0 3px; }
+  .rte { min-height:72px; padding:10px 12px; border:1.5px solid var(--line); border-radius:0 0 10px 10px; background:#fff; outline:none; line-height:1.9; font-size:1.05rem; }
+  .rte:focus { border-color:#2b2b2b; }
+  .rte:empty:before { content:attr(data-ph); color:#aaa; }
+  .rte ul, .rte ol { margin:4px 0; padding-inline-start:26px; }
+  .rte img { max-width:100%; max-height:320px; border-radius:8px; vertical-align:middle; margin:2px 0; }
+  .rte img:not([src]) { display:inline-block; min-width:90px; min-height:60px; background:#e9e5da; }
+  .imgprev img { max-width:100%; max-height:220px; border-radius:10px; display:block; margin-bottom:6px; }
   table { width:100%; border-collapse:collapse; }
   th, td { padding:10px 8px; text-align:right; border-bottom:1px solid var(--line); font-size:.95rem; }
   th { color:var(--muted); font-weight:600; font-size:.85rem; }
@@ -141,26 +154,89 @@ function copyLink(id, btn) {
 async function delExercise(id) {
   if (!confirm('هتمسحي التمرين وكل نتايجه. متأكدة؟')) return;
   const upd = { ['exercises/' + id]: null };
+  const usedElsewhere = new Set(); Object.entries(EX).forEach(([eid, e]) => { if (eid !== id) imageIdsOfExercise(e).forEach(i => usedElsewhere.add(i)); });
+  imageIdsOfExercise(EX[id]).forEach(i => { if (!usedElsewhere.has(i)) upd['images/' + i] = null; });
   Object.entries(AT).forEach(([aid, a]) => { if (a.exerciseId === id) upd['attempts/' + aid] = null; });
   try { await fdb.ref().update(upd); } catch (e) { alert('حصل خطأ في الحذف'); }
 }
 
 /* ---------- Editor ---------- */
-const blankMcq = () => ({ type: 'mcq', id: '', context: '', text: '', choices: ['', '', '', ''], correct: 0 });
+const blankMcq = () => ({ type: 'mcq', id: '', context: '', contextHtml: '', text: '', textHtml: '', choices: ['', '', '', ''], correct: 0 });
 const blankText = () => ({ type: 'text', id: '', context: '', text: '', answers: '' });
 const blankFill = () => ({ type: 'fill', id: '', context: '', text: '', sentences: [''], extras: '' });
-function newExercise() { editing = { title: '', questions: [], picking: true }; renderEditor(); }
+function newExercise() { editing = { title: '', questions: [], picking: true, pending: {} }; renderEditor(); }
 function editExercise(id) {
   const ex = EX[id];
   editing = {
-    id, createdAt: ex.createdAt, title: ex.title, picking: false,
+    id, createdAt: ex.createdAt, title: ex.title, picking: false, pending: {},
     questions: toArray(ex.questions).map(q => q.type === 'text'
       ? { type: 'text', id: q.id, context: q.context || '', text: q.text || '', answers: toArray(q.answers).join('\n') }
       : q.type === 'fill'
       ? { type: 'fill', id: q.id, context: q.context || '', text: q.text || '', sentences: toArray(q.sentences).length ? toArray(q.sentences) : [''], extras: toArray(q.extras).join('، ') }
-      : { type: 'mcq', id: q.id, context: q.context || '', text: q.text, choices: toArray(q.choices), correct: q.correct })
+      : { type: 'mcq', id: q.id, context: q.context || '', contextHtml: q.contextHtml || plainToHtml(q.context || ''), text: q.text, textHtml: q.textHtml || plainToHtml(q.text || ''), choices: toArray(q.choices), correct: q.correct })
   };
   renderEditor();
+}
+
+/* ---------- محرر النص المنسّق + الصور ---------- */
+const RTE_COLORS = ['#111111', '#c0392b', '#1e8449', '#1f4e9c', '#d35400', '#7d3c98', '#7f8c8d'];
+const RTE_MARKS = ['#fff3a3', '#cdeccf', '#cfe3ff', '#f9d2d2'];
+function mountRte(host) {
+  const qi = +host.dataset.qi, key = host.dataset.field + 'Html';
+  const ed = document.createElement('div');
+  ed.className = 'rte'; ed.contentEditable = 'true'; ed.dir = 'rtl'; ed.dataset.ph = host.dataset.ph || '';
+  ed.innerHTML = sanitizeHtml(editing.questions[qi][key] || '');
+  const save = () => { editing.questions[qi][key] = ed.innerHTML; };
+  const run = (cmd, val) => { ed.focus(); document.execCommand('styleWithCSS', false, true); document.execCommand(cmd, false, val || null); save(); };
+  const tb = document.createElement('div'); tb.className = 'rte-tb';
+  const btn = (html, title, fn, cls) => { const b = document.createElement('button'); b.type = 'button'; b.innerHTML = html; b.title = title; if (cls) b.className = cls;
+    b.onmousedown = e => e.preventDefault(); b.onclick = fn; tb.append(b); return b; };   // mousedown: عشان التحديد ميتفقدش
+  const sep = () => { const d = document.createElement('span'); d.className = 'sep'; tb.append(d); };
+  btn('<b>B</b>', 'عريض', () => run('bold'));
+  btn('<i>I</i>', 'مائل', () => run('italic'));
+  btn('<u>U</u>', 'تحته خط', () => run('underline'));
+  sep();
+  RTE_COLORS.forEach(c => { const b = btn('', 'لون الخط', () => run('foreColor', c), 'sw'); b.style.background = c; });
+  sep();
+  RTE_MARKS.forEach(c => { const b = btn('', 'تظليل', () => run('hiliteColor', c), 'sw'); b.style.background = c; });
+  btn('✕', 'شيل التظليل', () => run('hiliteColor', 'transparent'));
+  sep();
+  const sz = document.createElement('select');
+  sz.innerHTML = '<option value="">الحجم</option><option value="2">صغير</option><option value="3">عادي</option><option value="5">كبير</option><option value="6">كبير جدًا</option>';
+  sz.onchange = () => { if (sz.value) run('fontSize', sz.value); sz.value = ''; };
+  tb.append(sz); sep();
+  btn('• ≡', 'قائمة نقطية', () => run('insertUnorderedList'));
+  btn('⇔', 'في النص', () => run('justifyCenter'));
+  btn('⌫', 'شيل كل التنسيق', () => run('removeFormat'));
+  sep();
+  // إدراج صورة جوه النص عند المؤشر
+  const file = document.createElement('input'); file.type = 'file'; file.accept = 'image/*'; file.hidden = true;
+  btn('🖼 صورة', 'إدراج صورة في النص', () => file.click());
+  tb.append(file);
+  let range = null;
+  const keep = () => { const sel = getSelection(); if (sel.rangeCount && ed.contains(sel.anchorNode)) range = sel.getRangeAt(0).cloneRange(); };
+  ['keyup', 'mouseup', 'input', 'focus'].forEach(ev => ed.addEventListener(ev, keep));
+  file.onchange = async () => {
+    const f = file.files[0]; file.value = ''; if (!f) return;
+    try {
+      const d = await compressImage(f), id = newId(8);
+      editing.pending[id] = d;
+      ed.focus(); if (range) { const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range); }
+      document.execCommand('insertHTML', false, `<img data-img="${id}" src="${d.data}">`); save();
+    } catch (e) { alert(e.message); }
+  };
+  ed.oninput = save;
+  ed.onpaste = e => {   // اللصق دايمًا بعد تنضيفه
+    e.preventDefault();
+    const cd = e.clipboardData, h = cd.getData('text/html');
+    if (h) document.execCommand('insertHTML', false, sanitizeHtml(h)); else document.execCommand('insertText', false, cd.getData('text/plain'));
+    save();
+  };
+  host.append(tb, ed);
+}
+function hydrateEditor() {
+  document.querySelectorAll('.rte-host').forEach(mountRte);
+  document.querySelectorAll('.rte-host .rte').forEach(ed => hydrateImages(ed, editing.pending));
 }
 
 function mcqBox(q, qi) {
@@ -168,9 +244,9 @@ function mcqBox(q, qi) {
     <div class="qhead"><span>سؤال ${qi + 1} <span class="badge">اختيارات</span></span>
       <button class="btn sm danger" onclick="removeQ(${qi})">حذف السؤال</button></div>
     <label class="f">نص/مثال فوق السؤال (اختياري)</label>
-    <textarea oninput="editing.questions[${qi}].context=this.value" placeholder="مثلاً: الآية أو الجملة اللي هيتسأل عنها">${esc(q.context)}</textarea>
+    <div class="rte-host" data-qi="${qi}" data-field="context" data-ph="مثلاً: الآية أو الجملة اللي هيتسأل عنها"></div>
     <label class="f">السؤال</label>
-    <textarea oninput="editing.questions[${qi}].text=this.value">${esc(q.text)}</textarea>
+    <div class="rte-host" data-qi="${qi}" data-field="text" data-ph="اكتبي السؤال هنا"></div>
     <label class="f">الاختيارات (حددي الإجابة الصحيحة بالدايرة)</label>
     ${q.choices.map((c, ci) => `<div class="row" style="margin-bottom:6px">
       <input type="radio" name="correct${qi}" ${q.correct === ci ? 'checked' : ''} onchange="editing.questions[${qi}].correct=${ci}" style="width:20px;height:20px">
@@ -242,6 +318,7 @@ function renderEditor() {
     <div class="err" id="eerr"></div>
     <div class="row"><button class="btn green" id="savebtn" onclick="saveExercise()">حفظ التمرين</button>
     <button class="btn light" onclick="showExercises()">إلغاء</button></div></div>`, 'exercises');
+  hydrateEditor();
 }
 function addQ(type) {
   editing.questions.push(type === 'fill' ? blankFill() : type === 'text' ? blankText() : blankMcq());
@@ -287,19 +364,29 @@ async function saveExercise() {
       const extras = q.extras.split(/[,،]/).map(x => x.trim()).filter(Boolean);
       questions.push({ id: q.id || newId(4), type: 'fill', context: q.context.trim(), text: q.text.trim(), sentences: sents, extras });
     } else {
-      const text = q.text.trim();
+      const textHtml = sanitizeHtml(q.textHtml || ''), text = htmlToText(textHtml);
+      const contextHtml = sanitizeHtml(q.contextHtml || ''), context = htmlToText(contextHtml);
       if (!text) { err.textContent = `السؤال رقم ${n} فاضي`; return; }
       const keep = q.choices.map((c, idx) => ({ c: c.trim(), idx })).filter(x => x.c);
       if (keep.length < 2) { err.textContent = `السؤال رقم ${n} لازم يكون فيه اختيارين على الأقل`; return; }
       const correct = keep.findIndex(x => x.idx === q.correct);
       if (correct < 0) { err.textContent = `الإجابة الصحيحة في السؤال رقم ${n} مش مكتوبة (الاختيار فاضي)`; return; }
-      questions.push({ id: q.id || newId(4), type: 'mcq', context: q.context.trim(), text, choices: keep.map(x => x.c), correct });
+      const item = { id: q.id || newId(4), type: 'mcq', context, text, choices: keep.map(x => x.c), correct };
+      if (contextHtml) item.contextHtml = contextHtml;
+      item.textHtml = textHtml;
+      questions.push(item);
     }
   }
   const id = editing.id || newId(6);
   const btn = document.getElementById('savebtn'); btn.disabled = true;
   try {
-    await fdb.ref('exercises/' + id).set({ title, questions, createdAt: editing.createdAt || new Date().toISOString() });
+    // كله في عملية واحدة: التمرين + الصور الجديدة + مسح الصور القديمة
+    const usedElsewhere = new Set(); Object.entries(EX).forEach(([eid, e]) => { if (eid !== id) imageIdsOfExercise(e).forEach(i => usedElsewhere.add(i)); });
+    const newIds = imageIdsOfExercise({ questions }), oldIds = imageIdsOfExercise(EX[id]);
+    const upd = { ['exercises/' + id]: { title, questions, createdAt: editing.createdAt || new Date().toISOString() } };
+    newIds.forEach(i => { const p = editing.pending[i]; if (p) upd['images/' + i] = { data: p.data, w: p.w, h: p.h }; });   // الصور الجديدة
+    oldIds.forEach(i => { if (!newIds.has(i) && !usedElsewhere.has(i)) upd['images/' + i] = null; });                      // صور اتشالت من النص
+    await fdb.ref().update(upd);
     showExercises();
   } catch (e) { err.textContent = 'مقدرتش أحفظ. اتأكدي إنك داخلة بحساب الأدمن وإن القواعد منشورة.'; btn.disabled = false; }
 }
