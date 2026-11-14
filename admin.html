@@ -147,13 +147,16 @@ async function delExercise(id) {
 
 /* ---------- Editor ---------- */
 const blankMcq = () => ({ type: 'mcq', id: '', context: '', text: '', choices: ['', '', '', ''], correct: 0 });
+const blankText = () => ({ type: 'text', id: '', context: '', text: '', answers: '' });
 const blankFill = () => ({ type: 'fill', id: '', context: '', text: '', sentences: [''], extras: '' });
 function newExercise() { editing = { title: '', questions: [], picking: true }; renderEditor(); }
 function editExercise(id) {
   const ex = EX[id];
   editing = {
     id, createdAt: ex.createdAt, title: ex.title, picking: false,
-    questions: toArray(ex.questions).map(q => q.type === 'fill'
+    questions: toArray(ex.questions).map(q => q.type === 'text'
+      ? { type: 'text', id: q.id, context: q.context || '', text: q.text || '', answers: toArray(q.answers).join('\n') }
+      : q.type === 'fill'
       ? { type: 'fill', id: q.id, context: q.context || '', text: q.text || '', sentences: toArray(q.sentences).length ? toArray(q.sentences) : [''], extras: toArray(q.extras).join('، ') }
       : { type: 'mcq', id: q.id, context: q.context || '', text: q.text, choices: toArray(q.choices), correct: q.correct })
   };
@@ -195,6 +198,19 @@ function fillBox(q, qi) {
     <div class="preview" id="pv-${qi}">${esc(fillWords(q).join(' • ') || 'لسه مفيش كلمات')}</div>
   </div>`;
 }
+function textBox(q, qi) {
+  return `<div class="qbox">
+    <div class="qhead"><span>سؤال ${qi + 1} <span class="badge">إجابة مكتوبة</span></span>
+      <button class="btn sm danger" onclick="removeQ(${qi})">حذف السؤال</button></div>
+    <label class="f">نص/مثال فوق السؤال (اختياري)</label>
+    <textarea oninput="editing.questions[${qi}].context=this.value">${esc(q.context)}</textarea>
+    <label class="f">السؤال</label>
+    <textarea oninput="editing.questions[${qi}].text=this.value">${esc(q.text)}</textarea>
+    <label class="f">الإجابة النموذجية</label>
+    <div class="hintbox">الضيف بيكتب إجابته والتطبيق بيحسب نسبة تشابهها مع الإجابة النموذجية. <b>أكتر من ${TEXT_PASS_PERCENT}% = صح</b>، و${TEXT_PASS_PERCENT}% أو أقل = غلط. التشكيل واختلاف الهمزات (أ/ا) والتاء المربوطة (ة/ه) مبيأثروش. لو في أكتر من إجابة مقبولة اكتبي كل واحدة في سطر، وبيتحسب الأقرب.</div>
+    <textarea oninput="editing.questions[${qi}].answers=this.value" placeholder="الإجابة النموذجية (إجابة في كل سطر)">${esc(q.answers)}</textarea>
+  </div>`;
+}
 function fillWords(q) {
   const w = [];
   q.sentences.forEach(s => parseSentence(s).forEach(p => { if (p.t === 'blank' && p.v) w.push(p.v); }));
@@ -208,12 +224,13 @@ function updatePreview(qi) {
 
 function renderEditor() {
   view = 'editor';
-  const qs = editing.questions.map((q, qi) => q.type === 'fill' ? fillBox(q, qi) : mcqBox(q, qi)).join('');
+  const qs = editing.questions.map((q, qi) => q.type === 'fill' ? fillBox(q, qi) : q.type === 'text' ? textBox(q, qi) : mcqBox(q, qi)).join('');
   const picker = editing.picking
     ? `<div class="qbox picker"><b>اختاري نوع السؤال</b>
         <div class="row" style="margin-top:10px;justify-content:center;flex-wrap:wrap">
           <button class="btn" onclick="addQ('mcq')">☑️ اختيارات</button>
           <button class="btn" onclick="addQ('fill')">🧩 اسحب الكلمة للفراغ</button>
+          <button class="btn" onclick="addQ('text')">✍️ إجابة مكتوبة</button>
           ${editing.questions.length ? '<button class="btn light" onclick="editing.picking=false;renderEditor()">إلغاء</button>' : ''}
         </div></div>`
     : `<button class="btn light" onclick="editing.picking=true;renderEditor();window.scrollTo(0,document.body.scrollHeight)">+ سؤال جديد</button>`;
@@ -227,7 +244,7 @@ function renderEditor() {
     <button class="btn light" onclick="showExercises()">إلغاء</button></div></div>`, 'exercises');
 }
 function addQ(type) {
-  editing.questions.push(type === 'fill' ? blankFill() : blankMcq());
+  editing.questions.push(type === 'fill' ? blankFill() : type === 'text' ? blankText() : blankMcq());
   editing.picking = false; renderEditor();
   const boxes = document.querySelectorAll('.qbox'); boxes[boxes.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
@@ -249,7 +266,13 @@ async function saveExercise() {
   const questions = [];
   for (let i = 0; i < editing.questions.length; i++) {
     const q = editing.questions[i], n = i + 1;
-    if (q.type === 'fill') {
+    if (q.type === 'text') {
+      const text = q.text.trim();
+      if (!text) { err.textContent = `السؤال رقم ${n} فاضي`; return; }
+      const answers = q.answers.split('\n').map(x => x.trim()).filter(Boolean);
+      if (!answers.length) { err.textContent = `السؤال رقم ${n}: اكتبي الإجابة النموذجية`; return; }
+      questions.push({ id: q.id || newId(4), type: 'text', context: q.context.trim(), text, answers });
+    } else if (q.type === 'fill') {
       const sents = q.sentences.map(x => x.trim()).filter(Boolean);
       if (!sents.length) { err.textContent = `السؤال رقم ${n}: اكتبي جملة واحدة على الأقل`; return; }
       let blanks = 0;
@@ -307,7 +330,7 @@ function renderResults() {
           <button class="btn sm danger" onclick="delAttempt('${a.id}')">حذف</button></td></tr>
       <tr class="detail" id="d-${a.id}" style="display:${open ? 'table-row' : 'none'}"><td colspan="6">${
         a.answers.length ? a.answers.map((x, i) => `<div style="margin:6px 0"><span class="${x.isCorrect ? 'd-ok' : 'd-no'}">${x.isCorrect ? '✓' : '✗'}</span>
-          ${i + 1}. ${esc(x.questionText)} — اختارت: <b>${esc(x.chosenText)}</b>${x.isCorrect ? '' : ` <span class="muted">(الصح: ${esc(x.correctText)})</span>`}</div>`).join('') : '<span class="muted">لسه ما جاوبتش</span>'}</td></tr>`;
+          ${i + 1}. ${esc(x.questionText)} — اختارت: <b>${esc(x.chosenText)}</b>${x.similarity != null ? ` <span class="muted">(تطابق ${esc(x.similarity)}%)</span>` : ''}${x.isCorrect ? '' : ` <span class="muted">(الصح: ${esc(x.correctText)})</span>`}</div>`).join('') : '<span class="muted">لسه ما جاوبتش</span>'}</td></tr>`;
   }).join('');
   shell(`<div class="card"><div class="spread" style="margin-bottom:10px"><b>نتائج المستخدمين (${list.length})</b>
     <select id="rf" style="width:auto;min-width:200px" onchange="showResults(this.value)">${opts}</select></div>

@@ -51,6 +51,12 @@
   .fix { font-size:.8rem; color:var(--green); font-weight:600; }
   .hint { text-align:center; color:var(--muted); font-size:.9rem; margin:-8px 0 12px; }
   button.primary:disabled { opacity:.4; cursor:default; }
+  textarea.answer { width:100%; font:inherit; font-size:1.1rem; padding:14px; border:2px solid #ddd; border-radius:12px; resize:vertical; min-height:96px; }
+  .anstext { padding:14px; border-radius:12px; font-size:1.1rem; white-space:pre-wrap; text-align:center; }
+  .anstext.ok { background:#e2f5ea; border:2px solid var(--green); color:#1f7a44; font-weight:700; }
+  .anstext.no { background:#fdeceb; border:2px solid var(--red); color:#b53a37; font-weight:700; }
+  .simil { text-align:center; color:var(--muted); margin-top:10px; font-size:.9rem; }
+  .model { margin-top:10px; padding:12px; background:#eef6f0; border-radius:10px; color:#1f7a44; white-space:pre-wrap; }
 </style>
 </head>
 <body>
@@ -92,7 +98,9 @@ async function init() {
   if (!ex) { app.textContent = 'التمرين مش موجود'; return; }
   exercise = {
     title: ex.title,
-    questions: toArray(ex.questions).map(q => q.type === 'fill'
+    questions: toArray(ex.questions).map(q => q.type === 'text'
+      ? { id: q.id, type: 'text', context: q.context || '', text: q.text, answers: toArray(q.answers) }
+      : q.type === 'fill'
       ? { id: q.id, type: 'fill', context: q.context || '', text: q.text || 'اسحبي الكلمات للأماكن الفاضية', sentences: toArray(q.sentences), extras: toArray(q.extras) }
       : { id: q.id, type: 'mcq', context: q.context || '', text: q.text, choices: toArray(q.choices), correct: q.correct })
   };
@@ -163,6 +171,7 @@ function render() {
   card.append(el('p', { class: 'q' }, q.text));
 
   if (q.type === 'fill') renderFill(card, q, ans);
+  else if (q.type === 'text') renderText(card, q, ans);
   else renderMcq(card, q, ans);
 
   if (ans) {
@@ -239,6 +248,35 @@ async function saveAnswer(q, rec) {
   if (answeredAfter >= exercise.questions.length) upd.finishedAt = new Date().toISOString();
   await fdb.ref('attempts/' + state.attemptId).update(upd);
   state.answers[q.id] = rec;
+}
+
+/* ---------- إجابة مكتوبة ---------- */
+const textDraft = {}; // اللي اتكتب لحد دلوقتي لكل سؤال
+function renderText(card, q, ans) {
+  if (ans) {
+    card.append(el('div', { class: 'anstext ' + (ans.isCorrect ? 'ok' : 'no') }, ans.chosenText));
+    card.append(el('div', { class: 'simil' }, `نسبة التطابق مع الإجابة النموذجية: ${ans.similarity}%`));
+    if (!ans.isCorrect) card.append(el('div', { class: 'model' }, el('b', {}, 'الإجابة النموذجية: '), ans.correctText));
+    return;
+  }
+  const ta = el('textarea', { class: 'answer', placeholder: 'اكتبي إجابتك هنا', maxlength: '500', dir: 'auto' });
+  ta.value = textDraft[q.id] || '';
+  const btn = el('button', { class: 'primary' }, 'تحقق');
+  btn.disabled = !ta.value.trim();
+  ta.oninput = () => { textDraft[q.id] = ta.value; btn.disabled = !ta.value.trim(); };
+  btn.onclick = async () => {
+    btn.disabled = true; ta.disabled = true;
+    const written = ta.value.trim();
+    const similarity = textScore(written, q.answers);
+    const rec = {
+      questionId: q.id, type: 'text', questionText: q.text, chosenText: written,
+      correctText: q.answers.join(' / '), similarity, isCorrect: similarity > TEXT_PASS_PERCENT, at: new Date().toISOString()
+    };
+    try { await saveAnswer(q, rec); render(); if (rec.isCorrect) celebrate(); }
+    catch (e) { btn.disabled = false; ta.disabled = false; alert('حصل خطأ في حفظ الإجابة، حاولي تاني.'); }
+  };
+  card.append(ta, btn);
+  setTimeout(() => ta.focus(), 0);
 }
 
 /* ---------- اسحب الكلمة ---------- */
