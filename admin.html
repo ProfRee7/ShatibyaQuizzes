@@ -31,6 +31,10 @@
   .qbox { border:1.5px solid var(--line); border-radius:12px; padding:14px; margin:12px 0; background:#fcfbf8; }
   .qhead { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; font-weight:700; }
   .link { direction:ltr; text-align:left; font-size:.85rem; color:#555; word-break:break-all; background:#f3f0e7; padding:6px 10px; border-radius:8px; }
+  .badge { display:inline-block; font-size:.75rem; font-weight:600; background:#e8e3d5; color:#555; border-radius:99px; padding:2px 10px; margin-inline-start:6px; }
+  .picker { text-align:center; background:#f7f3e8; }
+  .hintbox { font-size:.85rem; color:var(--muted); background:#f3f0e7; border-radius:8px; padding:8px 10px; margin:6px 0; }
+  .preview { font-size:.9rem; margin-top:8px; padding:8px 10px; background:#eef6f0; border-radius:8px; }
   table { width:100%; border-collapse:collapse; }
   th, td { padding:10px 8px; text-align:right; border-bottom:1px solid var(--line); font-size:.95rem; }
   th { color:var(--muted); font-weight:600; font-size:.85rem; }
@@ -142,65 +146,132 @@ async function delExercise(id) {
 }
 
 /* ---------- Editor ---------- */
-const blankQ = () => ({ id: '', context: '', text: '', choices: ['', '', '', ''], correct: 0 });
-function newExercise() { editing = { title: '', questions: [blankQ()] }; renderEditor(); }
+const blankMcq = () => ({ type: 'mcq', id: '', context: '', text: '', choices: ['', '', '', ''], correct: 0 });
+const blankFill = () => ({ type: 'fill', id: '', context: '', text: '', sentences: [''], extras: '' });
+function newExercise() { editing = { title: '', questions: [], picking: true }; renderEditor(); }
 function editExercise(id) {
   const ex = EX[id];
   editing = {
-    id, createdAt: ex.createdAt, title: ex.title,
-    questions: toArray(ex.questions).map(q => ({ id: q.id, context: q.context || '', text: q.text, choices: toArray(q.choices), correct: q.correct }))
+    id, createdAt: ex.createdAt, title: ex.title, picking: false,
+    questions: toArray(ex.questions).map(q => q.type === 'fill'
+      ? { type: 'fill', id: q.id, context: q.context || '', text: q.text || '', sentences: toArray(q.sentences).length ? toArray(q.sentences) : [''], extras: toArray(q.extras).join('، ') }
+      : { type: 'mcq', id: q.id, context: q.context || '', text: q.text, choices: toArray(q.choices), correct: q.correct })
   };
   renderEditor();
 }
+
+function mcqBox(q, qi) {
+  return `<div class="qbox">
+    <div class="qhead"><span>سؤال ${qi + 1} <span class="badge">اختيارات</span></span>
+      <button class="btn sm danger" onclick="removeQ(${qi})">حذف السؤال</button></div>
+    <label class="f">نص/مثال فوق السؤال (اختياري)</label>
+    <textarea oninput="editing.questions[${qi}].context=this.value" placeholder="مثلاً: الآية أو الجملة اللي هيتسأل عنها">${esc(q.context)}</textarea>
+    <label class="f">السؤال</label>
+    <textarea oninput="editing.questions[${qi}].text=this.value">${esc(q.text)}</textarea>
+    <label class="f">الاختيارات (حددي الإجابة الصحيحة بالدايرة)</label>
+    ${q.choices.map((c, ci) => `<div class="row" style="margin-bottom:6px">
+      <input type="radio" name="correct${qi}" ${q.correct === ci ? 'checked' : ''} onchange="editing.questions[${qi}].correct=${ci}" style="width:20px;height:20px">
+      <input type="text" value="${esc(c)}" oninput="editing.questions[${qi}].choices[${ci}]=this.value" placeholder="اختيار ${ci + 1}">
+      <button class="btn sm danger" onclick="removeChoice(${qi},${ci})" ${q.choices.length <= 2 ? 'disabled' : ''}>✕</button></div>`).join('')}
+    <button class="btn sm light" onclick="addChoice(${qi})">+ اختيار</button>
+  </div>`;
+}
+function fillBox(q, qi) {
+  return `<div class="qbox">
+    <div class="qhead"><span>سؤال ${qi + 1} <span class="badge">اسحب الكلمة للفراغ</span></span>
+      <button class="btn sm danger" onclick="removeQ(${qi})">حذف السؤال</button></div>
+    <label class="f">نص/مثال فوق السؤال (اختياري)</label>
+    <textarea oninput="editing.questions[${qi}].context=this.value">${esc(q.context)}</textarea>
+    <label class="f">التعليمات (اختياري)</label>
+    <input type="text" value="${esc(q.text)}" oninput="editing.questions[${qi}].text=this.value" placeholder="اسحبي الكلمات للأماكن الفاضية">
+    <label class="f">الجمل</label>
+    <div class="hintbox">اكتبي الجملة كاملة وحطي الكلمة الناقصة بين <b dir="ltr">[[ ]]</b>. مثال: <b>الله [[غفور]] رحيم</b>. تقدري تحطي أكتر من فراغ في نفس الجملة.</div>
+    ${q.sentences.map((st, si) => `<div class="row" style="margin-bottom:6px">
+      <input type="text" value="${esc(st)}" oninput="editing.questions[${qi}].sentences[${si}]=this.value;updatePreview(${qi})" placeholder="جملة ${si + 1}">
+      <button class="btn sm danger" onclick="removeSentence(${qi},${si})" ${q.sentences.length <= 1 ? 'disabled' : ''}>✕</button></div>`).join('')}
+    <button class="btn sm light" onclick="addSentence(${qi})">+ جملة</button>
+    <label class="f">كلمات زيادة تلخبط (اختياري، افصلي بينها بفاصلة)</label>
+    <input type="text" value="${esc(q.extras)}" oninput="editing.questions[${qi}].extras=this.value;updatePreview(${qi})" placeholder="مثلاً: عزيز، حكيم">
+    <div class="preview" id="pv-${qi}">${esc(fillWords(q).join(' • ') || 'لسه مفيش كلمات')}</div>
+  </div>`;
+}
+function fillWords(q) {
+  const w = [];
+  q.sentences.forEach(s => parseSentence(s).forEach(p => { if (p.t === 'blank' && p.v) w.push(p.v); }));
+  q.extras.split(/[,،]/).map(x => x.trim()).filter(Boolean).forEach(x => w.push(x + ' (زيادة)'));
+  return w;
+}
+function updatePreview(qi) {
+  const e = document.getElementById('pv-' + qi);
+  if (e) e.textContent = 'الكلمات: ' + (fillWords(editing.questions[qi]).join(' • ') || 'لسه مفيش كلمات');
+}
+
 function renderEditor() {
   view = 'editor';
-  const qs = editing.questions.map((q, qi) => `
-    <div class="qbox">
-      <div class="qhead"><span>سؤال ${qi + 1}</span>
-        <button class="btn sm danger" onclick="removeQ(${qi})" ${editing.questions.length === 1 ? 'disabled' : ''}>حذف السؤال</button></div>
-      <label class="f">نص/مثال فوق السؤال (اختياري)</label>
-      <textarea oninput="editing.questions[${qi}].context=this.value" placeholder="مثلاً: الآية أو الجملة اللي هيتسأل عنها">${esc(q.context)}</textarea>
-      <label class="f">السؤال</label>
-      <textarea oninput="editing.questions[${qi}].text=this.value">${esc(q.text)}</textarea>
-      <label class="f">الاختيارات (حددي الإجابة الصحيحة بالدايرة)</label>
-      ${q.choices.map((c, ci) => `<div class="row" style="margin-bottom:6px">
-        <input type="radio" name="correct${qi}" ${q.correct === ci ? 'checked' : ''} onchange="editing.questions[${qi}].correct=${ci}" style="width:20px;height:20px">
-        <input type="text" value="${esc(c)}" oninput="editing.questions[${qi}].choices[${ci}]=this.value" placeholder="اختيار ${ci + 1}">
-        <button class="btn sm danger" onclick="removeChoice(${qi},${ci})" ${q.choices.length <= 2 ? 'disabled' : ''}>✕</button></div>`).join('')}
-      <button class="btn sm light" onclick="addChoice(${qi})">+ اختيار</button>
-    </div>`).join('');
+  const qs = editing.questions.map((q, qi) => q.type === 'fill' ? fillBox(q, qi) : mcqBox(q, qi)).join('');
+  const picker = editing.picking
+    ? `<div class="qbox picker"><b>اختاري نوع السؤال</b>
+        <div class="row" style="margin-top:10px;justify-content:center;flex-wrap:wrap">
+          <button class="btn" onclick="addQ('mcq')">☑️ اختيارات</button>
+          <button class="btn" onclick="addQ('fill')">🧩 اسحب الكلمة للفراغ</button>
+          ${editing.questions.length ? '<button class="btn light" onclick="editing.picking=false;renderEditor()">إلغاء</button>' : ''}
+        </div></div>`
+    : `<button class="btn light" onclick="editing.picking=true;renderEditor();window.scrollTo(0,document.body.scrollHeight)">+ سؤال جديد</button>`;
   shell(`<div class="card">
     <label class="f" style="margin-top:0">عنوان التمرين</label>
     <input type="text" value="${esc(editing.title)}" oninput="editing.title=this.value" placeholder="مثلاً: تحدي الشاطبية - فرش السور">
     ${qs}
-    <button class="btn light" onclick="addQ()">+ سؤال جديد</button>
+    ${picker}
     <div class="err" id="eerr"></div>
     <div class="row"><button class="btn green" id="savebtn" onclick="saveExercise()">حفظ التمرين</button>
     <button class="btn light" onclick="showExercises()">إلغاء</button></div></div>`, 'exercises');
 }
-function addQ() { editing.questions.push(blankQ()); renderEditor(); window.scrollTo(0, document.body.scrollHeight); }
-function removeQ(i) { editing.questions.splice(i, 1); renderEditor(); }
+function addQ(type) {
+  editing.questions.push(type === 'fill' ? blankFill() : blankMcq());
+  editing.picking = false; renderEditor();
+  const boxes = document.querySelectorAll('.qbox'); boxes[boxes.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+function removeQ(i) { editing.questions.splice(i, 1); if (!editing.questions.length) editing.picking = true; renderEditor(); }
 function addChoice(qi) { editing.questions[qi].choices.push(''); renderEditor(); }
 function removeChoice(qi, ci) {
   const q = editing.questions[qi]; q.choices.splice(ci, 1);
   if (q.correct === ci) q.correct = 0; else if (q.correct > ci) q.correct--;
   renderEditor();
 }
+function addSentence(qi) { editing.questions[qi].sentences.push(''); renderEditor(); }
+function removeSentence(qi, si) { editing.questions[qi].sentences.splice(si, 1); renderEditor(); }
+
 async function saveExercise() {
   const err = document.getElementById('eerr');
   const title = editing.title.trim();
   if (!title) { err.textContent = 'اكتبي عنوان للتمرين'; return; }
+  if (!editing.questions.length) { err.textContent = 'أضيفي سؤال واحد على الأقل'; return; }
   const questions = [];
   for (let i = 0; i < editing.questions.length; i++) {
-    const q = editing.questions[i];
-    const text = q.text.trim();
-    if (!text) { err.textContent = `السؤال رقم ${i + 1} فاضي`; return; }
-    // نشيل الاختيارات الفاضية ونظبط رقم الإجابة الصحيحة
-    const keep = q.choices.map((c, idx) => ({ c: c.trim(), idx })).filter(x => x.c);
-    if (keep.length < 2) { err.textContent = `السؤال رقم ${i + 1} لازم يكون فيه اختيارين على الأقل`; return; }
-    const correct = keep.findIndex(x => x.idx === q.correct);
-    if (correct < 0) { err.textContent = `الإجابة الصحيحة في السؤال رقم ${i + 1} مش مكتوبة (الاختيار فاضي)`; return; }
-    questions.push({ id: q.id || newId(4), context: q.context.trim(), text, choices: keep.map(x => x.c), correct });
+    const q = editing.questions[i], n = i + 1;
+    if (q.type === 'fill') {
+      const sents = q.sentences.map(x => x.trim()).filter(Boolean);
+      if (!sents.length) { err.textContent = `السؤال رقم ${n}: اكتبي جملة واحدة على الأقل`; return; }
+      let blanks = 0;
+      for (const st of sents) {
+        const parts = parseSentence(st);
+        for (const p of parts) {
+          if (p.t === 'blank') { if (!p.v) { err.textContent = `السؤال رقم ${n}: في فراغ [[ ]] من غير كلمة`; return; } blanks++; }
+          else if (p.v.includes('[[') || p.v.includes(']]')) { err.textContent = `السؤال رقم ${n}: القوسين [[ ]] مش مكتملين في "${st}"`; return; }
+        }
+      }
+      if (!blanks) { err.textContent = `السؤال رقم ${n}: لازم تحطي كلمة ناقصة واحدة على الأقل بين [[ ]]`; return; }
+      const extras = q.extras.split(/[,،]/).map(x => x.trim()).filter(Boolean);
+      questions.push({ id: q.id || newId(4), type: 'fill', context: q.context.trim(), text: q.text.trim(), sentences: sents, extras });
+    } else {
+      const text = q.text.trim();
+      if (!text) { err.textContent = `السؤال رقم ${n} فاضي`; return; }
+      const keep = q.choices.map((c, idx) => ({ c: c.trim(), idx })).filter(x => x.c);
+      if (keep.length < 2) { err.textContent = `السؤال رقم ${n} لازم يكون فيه اختيارين على الأقل`; return; }
+      const correct = keep.findIndex(x => x.idx === q.correct);
+      if (correct < 0) { err.textContent = `الإجابة الصحيحة في السؤال رقم ${n} مش مكتوبة (الاختيار فاضي)`; return; }
+      questions.push({ id: q.id || newId(4), type: 'mcq', context: q.context.trim(), text, choices: keep.map(x => x.c), correct });
+    }
   }
   const id = editing.id || newId(6);
   const btn = document.getElementById('savebtn'); btn.disabled = true;

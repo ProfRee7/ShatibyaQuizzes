@@ -34,6 +34,22 @@
   .dot.ok { background:var(--green); } .dot.no { background:var(--red); }
   .err { color:var(--red); text-align:center; margin-top:8px; min-height:1.2em; }
   .center { text-align:center; color:var(--muted); }
+  /* أسئلة اسحب الكلمة */
+  .bank { display:flex; flex-wrap:wrap; gap:10px; justify-content:center; padding:14px; background:#f1eee5; border-radius:14px; margin:6px 0 18px; min-height:62px; border:2px dashed transparent; }
+  .bank.over, .bank.armed { border-color:#b9b1a0; }
+  .chip { touch-action:none; user-select:none; -webkit-user-select:none; cursor:grab; background:#fff; border:2px solid #d8d2c2; border-radius:10px; padding:8px 14px; font-size:1.1rem; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  .chip.sel { border-color:#2b2b2b; background:#fff8d9; }
+  .chip.lifting { opacity:.35; }
+  .chip.ghost { position:fixed; z-index:99; pointer-events:none; transform:translate(-50%,-50%); box-shadow:0 6px 18px rgba(0,0,0,.25); }
+  .sent { font-size:1.2rem; line-height:2.8; margin:8px 0; text-align:right; white-space:pre-wrap; }
+  .slot { display:inline-flex; flex-direction:column; align-items:center; justify-content:center; min-width:84px; min-height:44px; padding:2px 6px; margin:0 4px; border:2px dashed #b9b1a0; border-radius:10px; vertical-align:middle; background:#faf8f3; line-height:1.4; }
+  .slot.over, .slot.armed { border-color:#2b2b2b; background:#fff8d9; }
+  .slot .chip { margin:0; }
+  .slot.ok { border:2px solid var(--green); background:#e2f5ea; color:#1f7a44; font-weight:700; }
+  .slot.no { border:2px solid var(--red); background:#fdeceb; color:#b53a37; font-weight:700; }
+  .fix { font-size:.8rem; color:var(--green); font-weight:600; }
+  .hint { text-align:center; color:var(--muted); font-size:.9rem; margin:-8px 0 12px; }
+  button.primary:disabled { opacity:.4; cursor:default; }
 </style>
 </head>
 <body>
@@ -75,7 +91,9 @@ async function init() {
   if (!ex) { app.textContent = 'التمرين مش موجود'; return; }
   exercise = {
     title: ex.title,
-    questions: toArray(ex.questions).map(q => ({ id: q.id, context: q.context || '', text: q.text, choices: toArray(q.choices), correct: q.correct }))
+    questions: toArray(ex.questions).map(q => q.type === 'fill'
+      ? { id: q.id, type: 'fill', context: q.context || '', text: q.text || 'اسحبي الكلمات للأماكن الفاضية', sentences: toArray(q.sentences), extras: toArray(q.extras) }
+      : { id: q.id, type: 'mcq', context: q.context || '', text: q.text, choices: toArray(q.choices), correct: q.correct })
   };
   titleEl.textContent = ex.title;
   document.title = ex.title;
@@ -143,19 +161,8 @@ function render() {
   if (q.context) card.append(el('div', { class: 'ctx' }, q.context));
   card.append(el('p', { class: 'q' }, q.text));
 
-  const btns = q.choices.map((c, i) => {
-    const b = el('button', { class: 'choice c' + (i % 6) }, c);
-    if (ans) {
-      b.disabled = true;
-      if (i === ans.correctIndex) b.className = 'choice correct';
-      else if (i === ans.chosen) b.className = 'choice wrong';
-      else b.classList.add('dim');
-    } else {
-      b.onclick = () => choose(q, i, btns);
-    }
-    return b;
-  });
-  card.append(...btns);
+  if (q.type === 'fill') renderFill(card, q, ans);
+  else renderMcq(card, q, ans);
 
   if (ans) {
     card.append(el('div', { class: 'feedback ' + (ans.isCorrect ? 'ok' : 'no') }, ans.isCorrect ? '✅ إجابة صحيحة' : '❌ إجابة غلط'));
@@ -165,24 +172,162 @@ function render() {
   app.replaceChildren(card);
 }
 
-async function choose(q, i, btns) {
+/* ---------- اختيارات ---------- */
+function renderMcq(card, q, ans) {
+  const btns = q.choices.map((c, i) => {
+    const b = el('button', { class: 'choice c' + (i % 6) }, c);
+    if (ans) {
+      b.disabled = true;
+      if (i === ans.correctIndex) b.className = 'choice correct';
+      else if (i === ans.chosen) b.className = 'choice wrong';
+      else b.classList.add('dim');
+    } else {
+      b.onclick = () => chooseMcq(q, i, btns);
+    }
+    return b;
+  });
+  card.append(...btns);
+}
+async function chooseMcq(q, i, btns) {
   btns.forEach(b => b.disabled = true);
   const rec = {
-    questionId: q.id, questionText: q.text, chosen: i, chosenText: q.choices[i],
+    questionId: q.id, type: 'mcq', questionText: q.text, chosen: i, chosenText: q.choices[i],
     correctIndex: q.correct, correctText: q.choices[q.correct],
     isCorrect: i === q.correct, at: new Date().toISOString()
   };
+  try { await saveAnswer(q, rec); render(); }
+  catch (e) { btns.forEach(b => b.disabled = false); alert('حصل خطأ في حفظ الإجابة، حاولي تاني.'); }
+}
+async function saveAnswer(q, rec) {
   const upd = { ['answers/' + q.id]: rec };
   const answeredAfter = exercise.questions.filter(x => state.answers[x.id] || x.id === q.id).length;
   if (answeredAfter >= exercise.questions.length) upd.finishedAt = new Date().toISOString();
-  try {
-    await fdb.ref('attempts/' + state.attemptId).update(upd);
-    state.answers[q.id] = rec;
-    render();
-  } catch (e) {
-    btns.forEach(b => b.disabled = false);
-    alert('حصل خطأ في حفظ الإجابة، حاولي تاني.');
+  await fdb.ref('attempts/' + state.attemptId).update(upd);
+  state.answers[q.id] = rec;
+}
+
+/* ---------- اسحب الكلمة ---------- */
+const fillUI = {}; // لكل سؤال: {tokens, placed:[tokenId|null لكل فراغ], sel}
+function fillModel(q) {
+  if (q._m) return q._m;
+  let n = 0; const answers = [];
+  const sentences = q.sentences.map(s => parseSentence(s).map(p => {
+    if (p.t === 'blank') { answers.push(p.v); return { blank: true, idx: n++ }; }
+    return { text: p.v };
+  }));
+  return (q._m = { sentences, answers });
+}
+function fillState(q) {
+  if (!fillUI[q.id]) {
+    const m = fillModel(q);
+    const tokens = shuffled([...m.answers.map((w, i) => ({ id: 'a' + i, text: w })), ...q.extras.map((w, i) => ({ id: 'x' + i, text: w }))]);
+    fillUI[q.id] = { tokens, placed: m.answers.map(() => null), sel: null };
   }
+  return fillUI[q.id];
+}
+
+function renderFill(card, q, ans) {
+  const m = fillModel(q);
+  const sentEls = (slotFn) => m.sentences.map(parts =>
+    el('div', { class: 'sent' }, parts.map(p => p.blank ? slotFn(p.idx) : document.createTextNode(p.text))));
+
+  // بعد الإجابة: عرض النتيجة لكل فراغ
+  if (ans) {
+    const blanks = toArray(ans.blanks);
+    card.append(...sentEls(i => {
+      const b = blanks[i] || { chosenText: '', correctText: '', ok: false };
+      return el('span', { class: 'slot ' + (b.ok ? 'ok' : 'no') }, b.chosenText, b.ok ? '' : el('span', { class: 'fix' }, '✔ ' + b.correctText));
+    }));
+    return;
+  }
+
+  const ui = fillState(q);
+  const tok = id => ui.tokens.find(t => t.id === id);
+  const armed = !!ui.sel;
+  const rerender = () => render();
+
+  const bank = el('div', { class: 'bank' + (armed ? ' armed' : ''), 'data-zone': 'bank' });
+  bank.onclick = () => { if (ui.sel) { dropToken(ui, ui.sel, { bank: true }); rerender(); } };
+  const unplaced = ui.tokens.filter(t => !ui.placed.includes(t.id));
+  if (unplaced.length) unplaced.forEach(t => bank.append(makeChip(t, ui, rerender)));
+  else bank.append(el('span', { class: 'center' }, '✓ كل الكلمات اتحطت'));
+
+  card.append(el('div', { class: 'hint' }, 'اسحبي الكلمة للمكان الفاضي (أو اضغطي على الكلمة ثم على المكان)'), bank);
+  card.append(...sentEls(i => {
+    const slot = el('span', { class: 'slot' + (armed ? ' armed' : ''), 'data-idx': String(i) });
+    slot.onclick = () => { if (ui.sel) { dropToken(ui, ui.sel, { slot: i }); rerender(); } };
+    if (ui.placed[i]) slot.append(makeChip(tok(ui.placed[i]), ui, rerender));
+    return slot;
+  }));
+
+  const check = el('button', { class: 'primary' }, 'تحقق');
+  check.disabled = !ui.placed.every(Boolean);
+  check.onclick = async () => {
+    check.disabled = true;
+    const blanks = m.answers.map((a, i) => { const t = tok(ui.placed[i]); return { chosenText: t.text, correctText: a, ok: t.text === a }; });
+    const rec = {
+      questionId: q.id, type: 'fill',
+      questionText: m.sentences.map(ps => ps.map(p => p.blank ? '____' : p.text).join('')).join(' / '),
+      chosenText: blanks.map(b => b.chosenText).join('، '), correctText: blanks.map(b => b.correctText).join('، '),
+      isCorrect: blanks.every(b => b.ok), blanks, at: new Date().toISOString()
+    };
+    try { await saveAnswer(q, rec); render(); }
+    catch (e) { check.disabled = false; alert('حصل خطأ في حفظ الإجابة، حاولي تاني.'); }
+  };
+  card.append(check);
+}
+
+// نقل كلمة: zone = {slot:i} أو {bank:true} أو null
+function dropToken(ui, tid, zone) {
+  const from = ui.placed.indexOf(tid);
+  if (zone && zone.slot !== undefined) {
+    const occupant = ui.placed[zone.slot];
+    if (from >= 0) ui.placed[from] = occupant === tid ? null : occupant; // تبديل
+    ui.placed[zone.slot] = tid;
+  } else if (from >= 0) {
+    ui.placed[from] = null; // رجوع للبنك
+  }
+  ui.sel = null;
+}
+function zoneAt(x, y) {
+  const n = document.elementFromPoint(x, y);
+  const z = n && n.closest('.slot[data-idx], .bank');
+  if (!z) return null;
+  return z.classList.contains('slot') ? { slot: +z.dataset.idx, el: z } : { bank: true, el: z };
+}
+
+// كلمة تتسحب (ماوس أو لمس) أو تتضغط عليها لاختيارها
+function makeChip(t, ui, rerender) {
+  const c = el('div', { class: 'chip' + (ui.sel === t.id ? ' sel' : '') }, t.text);
+  c.onclick = e => e.stopPropagation();
+  c.onpointerdown = e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const sx = e.clientX, sy = e.clientY; let moved = false, ghost = null, hover = null;
+    const move = ev => {
+      if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
+      if (!moved) { moved = true; ghost = c.cloneNode(true); ghost.classList.add('ghost'); document.body.append(ghost); c.classList.add('lifting'); }
+      ghost.style.left = ev.clientX + 'px'; ghost.style.top = ev.clientY + 'px';
+      const z = zoneAt(ev.clientX, ev.clientY);
+      if (hover && (!z || hover !== z.el)) hover.classList.remove('over');
+      hover = z ? z.el : null; if (hover) hover.classList.add('over');
+      ev.preventDefault();
+    };
+    const up = ev => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up);
+      if (ghost) ghost.remove();
+      if (hover) hover.classList.remove('over');
+      if (moved) {
+        dropToken(ui, t.id, ev.type === 'pointercancel' ? null : zoneAt(ev.clientX, ev.clientY));
+      } else {
+        ui.sel = ui.sel === t.id ? null : t.id; // ضغطة = اختيار/إلغاء اختيار
+      }
+      rerender();
+    };
+    window.addEventListener('pointermove', move, { passive: false });
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  };
+  return c;
 }
 
 function renderDone() {
