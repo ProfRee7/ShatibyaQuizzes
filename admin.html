@@ -282,9 +282,9 @@ function textBox(q, qi) {
     <textarea oninput="editing.questions[${qi}].context=this.value">${esc(q.context)}</textarea>
     <label class="f">السؤال</label>
     <textarea oninput="editing.questions[${qi}].text=this.value">${esc(q.text)}</textarea>
-    <label class="f">الإجابة النموذجية</label>
-    <div class="hintbox">الضيف بيكتب إجابته والتطبيق بيحسب نسبة تشابهها مع الإجابة النموذجية. <b>أكتر من ${TEXT_PASS_PERCENT}% = صح</b>، و${TEXT_PASS_PERCENT}% أو أقل = غلط. التشكيل واختلاف الهمزات (أ/ا) والتاء المربوطة (ة/ه) مبيأثروش. لو في أكتر من إجابة مقبولة اكتبي كل واحدة في سطر، وبيتحسب الأقرب.</div>
-    <textarea oninput="editing.questions[${qi}].answers=this.value" placeholder="الإجابة النموذجية (إجابة في كل سطر)">${esc(q.answers)}</textarea>
+    <label class="f">الإجابة النموذجية (بتظهر للطالبة بعد ما تجاوب)</label>
+    <div class="hintbox">الطالبة بتكتب إجابتها، وبعدين <b>بتشوف الإجابة النموذجية وتقيّم نفسها</b> (صح أو غلط)، والدرجة بتتحسب حسب تقييمها. لو الإجابة النموذجية فيها أكتر من سطر بتظهر كلها زي ما هي.</div>
+    <textarea oninput="editing.questions[${qi}].answers=this.value" placeholder="اكتبي الإجابة النموذجية">${esc(q.answers)}</textarea>
   </div>`;
 }
 function fillWords(q) {
@@ -417,7 +417,7 @@ function renderResults() {
           <button class="btn sm danger" onclick="delAttempt('${a.id}')">حذف</button></td></tr>
       <tr class="detail" id="d-${a.id}" style="display:${open ? 'table-row' : 'none'}"><td colspan="6">${
         a.answers.length ? a.answers.map((x, i) => `<div style="margin:6px 0"><span class="${x.isCorrect ? 'd-ok' : 'd-no'}">${x.isCorrect ? '✓' : '✗'}</span>
-          ${i + 1}. ${esc(x.questionText)} — اختارت: <b>${esc(x.chosenText)}</b>${x.similarity != null ? ` <span class="muted">(تطابق ${esc(x.similarity)}%)</span>` : ''}${x.isCorrect ? '' : ` <span class="muted">(الصح: ${esc(x.correctText)})</span>`}</div>`).join('') : '<span class="muted">لسه ما جاوبتش</span>'}</td></tr>`;
+          ${i + 1}. ${esc(x.questionText)} — ${x.type === 'text' ? 'كتبت' : 'اختارت'}: <b>${esc(x.chosenText)}</b>${x.type === 'text' ? ` <span class="muted">(الإجابة النموذجية: ${esc(x.correctText)}) • تقييم ذاتي</span>` : ''}${x.isCorrect || x.type === 'text' ? '' : ` <span class="muted">(الصح: ${esc(x.correctText)})</span>`}</div>`).join('') : '<span class="muted">لسه ما جاوبتش</span>'}</td></tr>`;
   }).join('');
   shell(`<div class="card"><div class="spread" style="margin-bottom:10px"><b>نتائج المستخدمين (${list.length})</b>
     <select id="rf" style="width:auto;min-width:200px" onchange="showResults(this.value)">${opts}</select></div>

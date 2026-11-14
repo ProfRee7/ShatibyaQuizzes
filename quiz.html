@@ -66,7 +66,12 @@
   .anstext { padding:14px; border-radius:12px; font-size:1.1rem; white-space:pre-wrap; text-align:center; }
   .anstext.ok { background:#e2f5ea; border:2px solid var(--green); color:#1f7a44; font-weight:700; }
   .anstext.no { background:#fdeceb; border:2px solid var(--red); color:#b53a37; font-weight:700; }
-  .simil { text-align:center; color:var(--muted); margin-top:10px; font-size:.9rem; }
+  .simil { text-align:center; color:var(--muted); margin-top:12px; font-size:.95rem; }
+  .anstext.plain { background:#f7f3e8; border:2px solid #e2dccb; color:var(--ink); font-weight:400; }
+  .selfrow { display:flex; gap:10px; margin-top:10px; }
+  .selfbtn { flex:1; border:0; border-radius:12px; padding:14px; font:inherit; font-size:1.05rem; font-weight:700; color:#fff; cursor:pointer; }
+  .selfbtn.ok { background:var(--green); } .selfbtn.no { background:var(--red); }
+  .selfbtn:disabled { opacity:.5; cursor:default; }
   .model { margin-top:10px; padding:12px; background:#eef6f0; border-radius:10px; color:#1f7a44; white-space:pre-wrap; }
 </style>
 </head>
@@ -188,7 +193,7 @@ function render() {
   else renderMcq(card, q, ans);
 
   if (ans) {
-    card.append(el('div', { class: 'feedback ' + (ans.isCorrect ? 'ok' : 'no') }, ans.isCorrect ? '✅ إجابة صحيحة' : '❌ إجابة غلط'));
+    card.append(el('div', { class: 'feedback ' + (ans.isCorrect ? 'ok' : 'no') }, ans.type === 'text' ? (ans.isCorrect ? '✅ قيّمتي إجابتك: صح' : '❌ قيّمتي إجابتك: غلط') : (ans.isCorrect ? '✅ إجابة صحيحة' : '❌ إجابة غلط')));
     const last = current === total - 1;
     card.append(el('button', { class: 'primary', onclick: () => { current++; render(); } }, last ? 'عرض النتيجة' : 'السؤال التالي'));
   }
@@ -276,31 +281,41 @@ async function saveAnswer(q, rec) {
   state.answers[q.id] = rec;
 }
 
-/* ---------- إجابة مكتوبة ---------- */
-const textDraft = {}; // اللي اتكتب لحد دلوقتي لكل سؤال
+/* ---------- إجابة مكتوبة (الطالبة بتقيّم نفسها) ---------- */
+const textDraft = {};    // اللي اتكتب لحد دلوقتي لكل سؤال
+const textRevealed = {}; // الأسئلة اللي اتعرضت إجابتها النموذجية
 function renderText(card, q, ans) {
+  const model = txt => el('div', { class: 'model' }, el('b', {}, 'الإجابة النموذجية:'), '\n' + txt);
+  // بعد التقييم: إجابتها + النموذجية + تقييمها
   if (ans) {
-    card.append(el('div', { class: 'anstext ' + (ans.isCorrect ? 'ok' : 'no') }, ans.chosenText));
-    card.append(el('div', { class: 'simil' }, `نسبة التطابق مع الإجابة النموذجية: ${ans.similarity}%`));
-    if (!ans.isCorrect) card.append(el('div', { class: 'model' }, el('b', {}, 'الإجابة النموذجية: '), ans.correctText));
+    card.append(el('div', { class: 'anstext ' + (ans.isCorrect ? 'ok' : 'no') }, ans.chosenText), model(ans.correctText));
+    return;
+  }
+  // بعد ما تكتب وتضغط "اعرضي": الإجابة اتقفلت، بتقارن وتقيّم نفسها
+  if (textRevealed[q.id]) {
+    const written = (textDraft[q.id] || '').trim();
+    const grade = async ok => {
+      row.querySelectorAll('button').forEach(b => b.disabled = true);
+      const rec = {
+        questionId: q.id, type: 'text', questionText: q.text, chosenText: written,
+        correctText: q.answers.join('\n'), selfGraded: true, isCorrect: ok, at: new Date().toISOString()
+      };
+      try { await saveAnswer(q, rec); render(); if (ok) celebrate(); }
+      catch (e) { row.querySelectorAll('button').forEach(b => b.disabled = false); alert('حصل خطأ في حفظ الإجابة، حاولي تاني.'); }
+    };
+    const row = el('div', { class: 'selfrow' },
+      el('button', { class: 'selfbtn ok', onclick: () => grade(true) }, '✅ إجابتي صح'),
+      el('button', { class: 'selfbtn no', onclick: () => grade(false) }, '❌ إجابتي غلط'));
+    card.append(el('div', { class: 'anstext plain' }, written), model(q.answers.join('\n')),
+      el('div', { class: 'simil' }, 'قارني إجابتك بالنموذجية وقيّمي نفسك بصراحة:'), row);
     return;
   }
   const ta = el('textarea', { class: 'answer', placeholder: 'اكتبي إجابتك هنا', maxlength: '500', dir: 'auto' });
   ta.value = textDraft[q.id] || '';
-  const btn = el('button', { class: 'primary' }, 'تحقق');
+  const btn = el('button', { class: 'primary' }, 'اعرضي الإجابة النموذجية');
   btn.disabled = !ta.value.trim();
   ta.oninput = () => { textDraft[q.id] = ta.value; btn.disabled = !ta.value.trim(); };
-  btn.onclick = async () => {
-    btn.disabled = true; ta.disabled = true;
-    const written = ta.value.trim();
-    const similarity = textScore(written, q.answers);
-    const rec = {
-      questionId: q.id, type: 'text', questionText: q.text, chosenText: written,
-      correctText: q.answers.join(' / '), similarity, isCorrect: similarity > TEXT_PASS_PERCENT, at: new Date().toISOString()
-    };
-    try { await saveAnswer(q, rec); render(); if (rec.isCorrect) celebrate(); }
-    catch (e) { btn.disabled = false; ta.disabled = false; alert('حصل خطأ في حفظ الإجابة، حاولي تاني.'); }
-  };
+  btn.onclick = () => { textDraft[q.id] = ta.value; textRevealed[q.id] = true; render(); };
   card.append(ta, btn);
   setTimeout(() => ta.focus(), 0);
 }
