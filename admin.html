@@ -8,7 +8,9 @@
 <style>
   :root { --bg:#f6f4ef; --ink:#222; --muted:#777; --green:#2e9d5b; --red:#e0524f; --line:#e4e0d6; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink); font-family:'Cairo',system-ui,sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:'Cairo',system-ui,sans-serif; overflow-wrap:anywhere; }
+  .row > *, .spread > * { min-width:0; }
+  td, th { overflow-wrap:anywhere; }
   .wrap { max-width:900px; margin:0 auto; padding:16px 16px 80px; }
   header { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; flex-wrap:wrap; }
   h1 { font-size:1.3rem; margin:0; }
