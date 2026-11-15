@@ -164,17 +164,17 @@ async function delExercise(id) {
 
 /* ---------- Editor ---------- */
 const blankMcq = () => ({ type: 'mcq', id: '', context: '', contextHtml: '', text: '', textHtml: '', choices: ['', '', '', ''], correct: 0 });
-const blankText = () => ({ type: 'text', id: '', context: '', text: '', answers: '' });
-const blankFill = () => ({ type: 'fill', id: '', context: '', text: '', sentences: [''], extras: '' });
+const blankText = () => ({ type: 'text', id: '', context: '', contextHtml: '', text: '', textHtml: '', answers: '' });
+const blankFill = () => ({ type: 'fill', id: '', context: '', contextHtml: '', text: '', textHtml: '', sentences: [''], extras: '' });
 function newExercise() { editing = { title: '', questions: [], picking: true, pending: {} }; renderEditor(); }
 function editExercise(id) {
   const ex = EX[id];
   editing = {
     id, createdAt: ex.createdAt, title: ex.title, picking: false, pending: {},
     questions: toArray(ex.questions).map(q => q.type === 'text'
-      ? { type: 'text', id: q.id, context: q.context || '', text: q.text || '', answers: toArray(q.answers).join('\n') }
+      ? { type: 'text', id: q.id, context: q.context || '', contextHtml: q.contextHtml || plainToHtml(q.context || ''), text: q.text || '', textHtml: q.textHtml || plainToHtml(q.text || ''), answers: toArray(q.answers).join('\n') }
       : q.type === 'fill'
-      ? { type: 'fill', id: q.id, context: q.context || '', text: q.text || '', sentences: toArray(q.sentences).length ? toArray(q.sentences) : [''], extras: toArray(q.extras).join('، ') }
+      ? { type: 'fill', id: q.id, context: q.context || '', contextHtml: q.contextHtml || plainToHtml(q.context || ''), text: q.text || '', textHtml: q.textHtml || plainToHtml(q.text || ''), sentences: toArray(q.sentences).length ? toArray(q.sentences) : [''], extras: toArray(q.extras).join('، ') }
       : { type: 'mcq', id: q.id, context: q.context || '', contextHtml: q.contextHtml || plainToHtml(q.context || ''), text: q.text, textHtml: q.textHtml || plainToHtml(q.text || ''), choices: toArray(q.choices), correct: q.correct })
   };
   renderEditor();
@@ -262,9 +262,9 @@ function fillBox(q, qi) {
     <div class="qhead"><span>سؤال ${qi + 1} <span class="badge">اسحب الكلمة للفراغ</span></span>
       <button class="btn sm danger" onclick="removeQ(${qi})">حذف السؤال</button></div>
     <label class="f">نص/مثال فوق السؤال (اختياري)</label>
-    <textarea oninput="editing.questions[${qi}].context=this.value">${esc(q.context)}</textarea>
+    <div class="rte-host" data-qi="${qi}" data-field="context" data-ph="مثلاً: الآية أو الجملة اللي هيتسأل عنها"></div>
     <label class="f">التعليمات (اختياري)</label>
-    <input type="text" value="${esc(q.text)}" oninput="editing.questions[${qi}].text=this.value" placeholder="اسحبي الكلمات للأماكن الفاضية">
+    <div class="rte-host" data-qi="${qi}" data-field="text" data-ph="اسحبي الكلمات للأماكن الفاضية"></div>
     <label class="f">الجمل</label>
     <div class="hintbox">اكتبي الجملة كاملة وحطي الكلمة الناقصة بين <b dir="ltr">[[ ]]</b>. مثال: <b>الله [[غفور]] رحيم</b>. تقدري تحطي أكتر من فراغ في نفس الجملة.</div>
     ${q.sentences.map((st, si) => `<div class="row" style="margin-bottom:6px">
@@ -281,9 +281,9 @@ function textBox(q, qi) {
     <div class="qhead"><span>سؤال ${qi + 1} <span class="badge">إجابة مكتوبة</span></span>
       <button class="btn sm danger" onclick="removeQ(${qi})">حذف السؤال</button></div>
     <label class="f">نص/مثال فوق السؤال (اختياري)</label>
-    <textarea oninput="editing.questions[${qi}].context=this.value">${esc(q.context)}</textarea>
+    <div class="rte-host" data-qi="${qi}" data-field="context" data-ph="مثلاً: الآية أو الجملة اللي هيتسأل عنها"></div>
     <label class="f">السؤال</label>
-    <textarea oninput="editing.questions[${qi}].text=this.value">${esc(q.text)}</textarea>
+    <div class="rte-host" data-qi="${qi}" data-field="text" data-ph="اكتبي السؤال هنا"></div>
     <label class="f">الإجابة النموذجية (بتظهر للطالبة بعد ما تجاوب)</label>
     <div class="hintbox">الطالبة بتكتب إجابتها، وبعدين <b>بتشوف الإجابة النموذجية وتقيّم نفسها</b> (صح أو غلط)، والدرجة بتتحسب حسب تقييمها. لو الإجابة النموذجية فيها أكتر من سطر بتظهر كلها زي ما هي.</div>
     <textarea oninput="editing.questions[${qi}].answers=this.value" placeholder="اكتبي الإجابة النموذجية">${esc(q.answers)}</textarea>
@@ -337,6 +337,19 @@ function removeChoice(qi, ci) {
 function addSentence(qi) { editing.questions[qi].sentences.push(''); renderEditor(); }
 function removeSentence(qi, si) { editing.questions[qi].sentences.splice(si, 1); renderEditor(); }
 
+// تجهيز نص السؤال والمثال (منسّق) للحفظ — نفس الشغل لكل أنواع الأسئلة
+function richFields(q) {
+  const textHtml = sanitizeHtml(q.textHtml || ''), contextHtml = sanitizeHtml(q.contextHtml || '');
+  const plain = htmlToText(textHtml), hasImg = imageIdsIn(textHtml).length > 0;
+  return { textHtml, contextHtml, context: htmlToText(contextHtml), text: plain || (hasImg ? '(سؤال بصورة)' : ''), hasText: !!(plain || hasImg) };
+}
+function applyRich(item, r) {
+  item.context = r.context; item.text = r.text;
+  if (r.contextHtml) item.contextHtml = r.contextHtml;
+  if (r.textHtml) item.textHtml = r.textHtml;
+  return item;
+}
+
 async function saveExercise() {
   const err = document.getElementById('eerr');
   const title = editing.title.trim();
@@ -346,11 +359,11 @@ async function saveExercise() {
   for (let i = 0; i < editing.questions.length; i++) {
     const q = editing.questions[i], n = i + 1;
     if (q.type === 'text') {
-      const text = q.text.trim();
-      if (!text) { err.textContent = `السؤال رقم ${n} فاضي`; return; }
+      const r = richFields(q);
+      if (!r.hasText) { err.textContent = `السؤال رقم ${n} فاضي`; return; }
       const answers = q.answers.split('\n').map(x => x.trim()).filter(Boolean);
       if (!answers.length) { err.textContent = `السؤال رقم ${n}: اكتبي الإجابة النموذجية`; return; }
-      questions.push({ id: q.id || newId(4), type: 'text', context: q.context.trim(), text, answers });
+      questions.push(applyRich({ id: q.id || newId(4), type: 'text', answers }, r));
     } else if (q.type === 'fill') {
       const sents = q.sentences.map(x => x.trim()).filter(Boolean);
       if (!sents.length) { err.textContent = `السؤال رقم ${n}: اكتبي جملة واحدة على الأقل`; return; }
@@ -364,19 +377,15 @@ async function saveExercise() {
       }
       if (!blanks) { err.textContent = `السؤال رقم ${n}: لازم تحطي كلمة ناقصة واحدة على الأقل بين [[ ]]`; return; }
       const extras = q.extras.split(/[,،]/).map(x => x.trim()).filter(Boolean);
-      questions.push({ id: q.id || newId(4), type: 'fill', context: q.context.trim(), text: q.text.trim(), sentences: sents, extras });
+      questions.push(applyRich({ id: q.id || newId(4), type: 'fill', sentences: sents, extras }, richFields(q)));
     } else {
-      const textHtml = sanitizeHtml(q.textHtml || ''), text = htmlToText(textHtml);
-      const contextHtml = sanitizeHtml(q.contextHtml || ''), context = htmlToText(contextHtml);
-      if (!text) { err.textContent = `السؤال رقم ${n} فاضي`; return; }
+      const r = richFields(q);
+      if (!r.hasText) { err.textContent = `السؤال رقم ${n} فاضي`; return; }
       const keep = q.choices.map((c, idx) => ({ c: c.trim(), idx })).filter(x => x.c);
       if (keep.length < 2) { err.textContent = `السؤال رقم ${n} لازم يكون فيه اختيارين على الأقل`; return; }
       const correct = keep.findIndex(x => x.idx === q.correct);
       if (correct < 0) { err.textContent = `الإجابة الصحيحة في السؤال رقم ${n} مش مكتوبة (الاختيار فاضي)`; return; }
-      const item = { id: q.id || newId(4), type: 'mcq', context, text, choices: keep.map(x => x.c), correct };
-      if (contextHtml) item.contextHtml = contextHtml;
-      item.textHtml = textHtml;
-      questions.push(item);
+      questions.push(applyRich({ id: q.id || newId(4), type: 'mcq', choices: keep.map(x => x.c), correct }, r));
     }
   }
   const id = editing.id || newId(6);

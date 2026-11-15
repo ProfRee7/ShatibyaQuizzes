@@ -117,9 +117,9 @@ async function init() {
   exercise = {
     title: ex.title,
     questions: toArray(ex.questions).map(q => q.type === 'text'
-      ? { id: q.id, type: 'text', context: q.context || '', text: q.text, answers: toArray(q.answers) }
+      ? { id: q.id, type: 'text', context: q.context || '', contextHtml: q.contextHtml || '', text: q.text, textHtml: q.textHtml || '', answers: toArray(q.answers) }
       : q.type === 'fill'
-      ? { id: q.id, type: 'fill', context: q.context || '', text: q.text || 'اسحبي الكلمات للأماكن الفاضية', sentences: toArray(q.sentences), extras: toArray(q.extras) }
+      ? { id: q.id, type: 'fill', context: q.context || '', contextHtml: q.contextHtml || '', textHtml: q.textHtml || '', text: q.text || 'اسحبي الكلمات للأماكن الفاضية', sentences: toArray(q.sentences), extras: toArray(q.extras) }
       : { id: q.id, type: 'mcq', context: q.context || '', contextHtml: q.contextHtml || '', text: q.text, textHtml: q.textHtml || '', choices: toArray(q.choices), correct: q.correct })
   };
   titleEl.textContent = ex.title;
