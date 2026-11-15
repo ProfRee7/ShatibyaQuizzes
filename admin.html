@@ -86,17 +86,16 @@ fauth.onAuthStateChanged(user => {
 
 function renderLogin(msg) {
   view = 'login';
-  root.innerHTML = `<div class="card login"><h1 style="text-align:center">دخول الأدمن</h1>
+  root.innerHTML = `<form class="card login" id="lf"><h1 style="text-align:center">دخول الأدمن</h1>
     <label class="f">الإيميل</label><input type="email" id="em" autocomplete="username" dir="ltr">
     <label class="f">كلمة السر</label><input type="password" id="pw" autocomplete="current-password" dir="ltr">
-    <div class="err" id="lerr">${esc(msg || '')}</div><button class="btn" style="width:100%" id="lbtn">دخول</button></div>`;
+    <div class="err" id="lerr">${esc(msg || '')}</div><button type="submit" class="btn" style="width:100%" id="lbtn">دخول</button></form>`;
   const go = async () => {
     const btn = document.getElementById('lbtn'); btn.disabled = true;
     try { await fauth.signInWithEmailAndPassword(document.getElementById('em').value.trim(), document.getElementById('pw').value); }
     catch (e) { document.getElementById('lerr').textContent = 'الإيميل أو كلمة السر غلط'; btn.disabled = false; }
   };
-  document.getElementById('lbtn').onclick = go;
-  document.getElementById('pw').onkeydown = e => { if (e.key === 'Enter') go(); };
+  document.getElementById('lf').onsubmit = e => { e.preventDefault(); go(); };   // Enter من أي خانة أو الضغط على الزرار
 }
 function logout() { fauth.signOut(); }
 
